@@ -603,9 +603,16 @@ def should_reroll_ability(name, can_speak, size_category):
     return False
 
 
-def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_form, has_wings, rank):
+def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_form, has_wings, rank, signature_choice=None):
     """
     Selects built-in form/wings abilities first, then rolls others until total cost meets or exceeds target.
+
+    signature_choice controls the form's signature ability:
+        None  -> random (90% chance), the default / off-mode behavior
+        True  -> force-include it
+        False -> force-exclude it
+    In every case its cost is counted against target_cost, because it is added
+    before the roll loop below.
     """
     selected = []
     seen = set()
@@ -622,25 +629,34 @@ def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_f
         seen.add(name)
         return cost_val
 
-    # Built-in logic based on wings and body form
+    # Built-in logic based on wings and body form. Flying is always granted to
+    # winged forms; the signature ability depends on signature_choice.
     if has_wings and "Flying" not in seen:
         total += add_builtin("Flying")
-    if body_form == "Arachnine" and random.random() < 0.9 and "Poison" not in seen:
-        total += add_builtin("Poison")
-    elif body_form == "Monadine" and random.random() < 0.9 and "Swallow Attack" not in seen                             and size_category in {"Huge", "Gigantic", "Colossal"}:
-        total += add_builtin("Swallow Attack")
-    elif body_form == "Scolopendrine" and random.random() < 0.9 and "Paralysis" not in seen:
-        total += add_builtin("Paralysis")
-    elif body_form == "Wyverine" and random.random() < 0.9:
-        if has_wings and "Dive Attack" not in seen:
-            total += add_builtin(
-                "Dive Attack",
-                "The Cacodemon can make dive attacks that deal double damage. "
-                "If a dive hits a victim smaller than itself, it grabs and carries him off, "
-                "unless the victim makes a successful size-adjusted Paralysis save."
-            )
-        elif not has_wings and "Berserk" not in seen:
-            total += add_builtin("Berserk")
+
+    if signature_choice is None:
+        include_signature = random.random() < 0.9
+    else:
+        include_signature = signature_choice
+
+    if include_signature:
+        if body_form == "Arachnine" and "Poison" not in seen:
+            total += add_builtin("Poison")
+        elif body_form == "Monadine" and "Swallow Attack" not in seen \
+                and size_category in {"Huge", "Gigantic", "Colossal"}:
+            total += add_builtin("Swallow Attack")
+        elif body_form == "Scolopendrine" and "Paralysis" not in seen:
+            total += add_builtin("Paralysis")
+        elif body_form == "Wyverine":
+            if has_wings and "Dive Attack" not in seen:
+                total += add_builtin(
+                    "Dive Attack",
+                    "The Cacodemon can make dive attacks that deal double damage. "
+                    "If a dive hits a victim smaller than itself, it grabs and carries him off, "
+                    "unless the victim makes a successful size-adjusted Paralysis save."
+                )
+            elif not has_wings and "Berserk" not in seen:
+                total += add_builtin("Berserk")
 
     # Roll additional abilities until we reach the cost goal
     while total < target_cost:
@@ -704,7 +720,7 @@ def size_calc(hd, bme):
 # In[13]:
 
 
-def generate_cacodemon_base(rank, body_form_roll = None):
+def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signature_choice = None):
     # Define rank traits
     rank_traits = {
         "Spawn": {"special_abilities": 2, "speak_chance": 0.01},
@@ -727,19 +743,24 @@ def generate_cacodemon_base(rank, body_form_roll = None):
     can_speak = random.random() < traits["speak_chance"]
 
     # Determine body form
-    if body_form_roll is None:
-        body_form_roll = random.randint(1, 10)
-    if body_form_roll <= 2:
-        body_form = "Arachnine"
-    elif body_form_roll <= 4:
-        body_form = "Humanoid"
-    elif body_form_roll <= 6:
-        body_form = "Monadine"
-    elif body_form_roll <= 8:
-        body_form = "Scolopendrine"
+    if body_form is not None:
+        # Choice Mode: the form was picked by the caller; wings are still
+        # rolled randomly (50/50, matching the odds of the random path).
+        has_wings = random.random() < 0.5
     else:
-        body_form = "Wyverine"
-    has_wings = body_form_roll % 2 == 1
+        if body_form_roll is None:
+            body_form_roll = random.randint(1, 10)
+        if body_form_roll <= 2:
+            body_form = "Arachnine"
+        elif body_form_roll <= 4:
+            body_form = "Humanoid"
+        elif body_form_roll <= 6:
+            body_form = "Monadine"
+        elif body_form_roll <= 8:
+            body_form = "Scolopendrine"
+        else:
+            body_form = "Wyverine"
+        has_wings = body_form_roll % 2 == 1
 
 
         
@@ -750,7 +771,7 @@ def generate_cacodemon_base(rank, body_form_roll = None):
     attack_throw = str(max(-9, 11-hd_num)) + "+"
     size = size_calc(hd_num, combat_stats["bme"])
     
-    abilities = roll_abilities_with_cost_limit(traits["special_abilities"], can_speak, size["category"], body_form, has_wings, rank)
+    abilities = roll_abilities_with_cost_limit(traits["special_abilities"], can_speak, size["category"], body_form, has_wings, rank, signature_choice)
     
     for ab in abilities["abilities"]:
         if ab['name'] == "Spellcasting":
