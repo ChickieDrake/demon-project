@@ -10,6 +10,8 @@ randomly-rolled ability carries its numeric roll. Tests use that marker to tell
 a *chosen* signature apart from one that merely happened to be rolled.
 """
 
+import inspect
+
 from Cacodemon_Generator import (
     generate_cacodemon_base,
     roll_abilities_with_cost_limit,
@@ -116,3 +118,33 @@ def test_generate_with_chosen_form_and_forced_signature():
     )
     assert result["body_form"][0] == "Arachnine"
     assert has_auto(result["abilities"], "Poison")
+
+
+# --- Speech / spellcasting -------------------------------------------------
+
+def test_uses_speech_defaults_to_false():
+    assert inspect.signature(generate_cacodemon_base).parameters["uses_speech"].default is False
+
+
+def test_speech_off_disables_spellcasting():
+    result = generate_cacodemon_base("Imp", uses_speech=False)
+    assert result["spells"] == "None"
+    assert "Spellcasting" not in [a["name"] for a in result["abilities"]["abilities"]]
+
+
+def test_uses_speech_true_enables_spellcasting():
+    result = generate_cacodemon_base("Imp", uses_speech=True)
+    assert result["spells"] != "None"
+
+
+# --- Stats block extraction ------------------------------------------------
+
+def test_format_stats_block_has_stats_only():
+    from Cacodemon_Generator import format_stats_block
+    demon = generate_cacodemon_base("Imp", body_form="Arachnine")
+    block = format_stats_block(demon)
+    assert "Size:" in block
+    assert "Other Senses:" in block
+    # It is ONLY the stats -- no abilities or spellcasting sections.
+    assert "Special Abilities" not in block
+    assert "Spellcasting" not in block

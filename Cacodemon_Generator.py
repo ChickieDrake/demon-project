@@ -720,7 +720,7 @@ def size_calc(hd, bme):
 # In[13]:
 
 
-def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signature_choice = None):
+def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signature_choice = None, uses_speech = False):
     # Define rank traits
     rank_traits = {
         "Spawn": {"special_abilities": 2, "speak_chance": 0.01},
@@ -740,7 +740,10 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
         raise ValueError(f"Unknown rank: {rank}")
 
     traits = rank_traits[rank]
-    can_speak = random.random() < traits["speak_chance"]
+    # Speech is off by default. With no speech there is no spellcasting: the
+    # Spellcasting special ability is rerolled (see should_reroll_ability) and
+    # generate_spellcasting short-circuits to "None".
+    can_speak = uses_speech
 
     # Determine body form
     if body_form is not None:
@@ -989,6 +992,53 @@ def format_cacodemon_statblock(cacodemon):
                 lines.append(f"{level}: [Unrecognized spell format]")
     else:
         lines.append("Unrecognized spell format.")
+
+    return "\n".join(lines)
+
+
+def format_stats_block(cacodemon):
+    """Return just the Size -> Other Senses stat lines as text.
+
+    Land speed depends on whether the demon can fly, and Other Senses come from
+    the Special Senses ability if present.
+    """
+    lines = []
+
+    size_data = cacodemon.get('size: ', {})
+    combat = cacodemon.get('combat_stats', {})
+    movement = combat.get('movement', {})
+    primary = cacodemon.get('primary_stats', {})
+
+    myAC = primary.get('ac', 0)
+    flySpeed = 'None'
+    has_flying = False
+    landSpeed = movement.get('land', '-')
+    sense = 'None'
+
+    for ab in cacodemon['abilities']['abilities']:
+        if ab['name'] == "Flying":
+            has_flying = True
+            flySpeed = movement.get('fly', '-')
+        if ab['name'] == "Special Senses":
+            sense = ab['detail'][0]
+
+    if 'or' in landSpeed:
+        options = landSpeed.split('or')
+        landSpeed = options[1].strip() if has_flying else options[0].strip()
+
+    lines.append(f"{'Size:':15} {size_data.get('category', 'Unknown')}")
+    lines.append(f"{'Speed (land):':15} {landSpeed}")
+    lines.append(f"{'Speed (fly):':15} {flySpeed}")
+    lines.append(f"{'Speed (climb):':15} {movement.get('climb', '-')}")
+    lines.append(f"{'Speed (swim):':15} {movement.get('swim', '-')}")
+    lines.append(f"{'Armor Class:':15} {myAC}")
+    lines.append(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
+    lines.append(f"{'Attacks:':15} {combat.get('attack_routine', '-')}, {cacodemon['attack']}")
+    lines.append(f"{'Damage:':15} {', '.join(combat.get('damage', []))}")
+    lines.append(f"{'Save:':15} {primary.get('save', '-')}")
+    lines.append(f"{'Morale:':15} {primary.get('morale', '-')}")
+    lines.append(f"{'Vision:':15} Lightless Vision (90')")
+    lines.append(f"{'Other Senses:':15} {sense}")
 
     return "\n".join(lines)
 

@@ -1,5 +1,5 @@
 import streamlit as st
-from Cacodemon_Generator import generate_cacodemon_base, format_cacodemon_statblock
+from Cacodemon_Generator import generate_cacodemon_base, format_stats_block
 
 
 st.title("Cacodemon Generator")
@@ -9,41 +9,65 @@ RANK = "Imp"
 
 FORMS = ["Arachnine", "Humanoid", "Monadine", "Scolopendrine", "Wyverine"]
 
-# The signature ability each non-humanoid form can contribute. Wyverine's
-# depends on wings (which stay random), so it is described rather than named.
-SIGNATURE_LABELS = {
+# The signature ability each non-humanoid form contributes. When a form is
+# chosen, this becomes the label of the "apply signature" toggle. Humanoid has
+# no signature ability, so the toggle is hidden for it.
+SIGNATURE_TOGGLE_LABELS = {
     "Arachnine": "Poison",
-    "Monadine": "Swallow Attack (only if Huge or larger)",
+    "Monadine": "Swallow Attack",
     "Scolopendrine": "Paralysis",
-    "Wyverine": "Dive Attack if winged, otherwise Berserk",
+    "Wyverine": "Dive Attack or Berserk",
 }
 
 # --- Choice Mode: two independent options, both off by default ---
 choose_form = st.toggle("Choose body form")
 body_form = st.selectbox("Body Form", FORMS) if choose_form else None
 
-choose_signature = st.toggle("Choose signature ability")
-# Off -> None (rolled randomly, ~90%). On -> True (guaranteed to be included).
-signature_choice = True if choose_signature else None
-
-if choose_signature:
-    if body_form is None:
-        st.caption("The signature ability of whichever form is rolled will be included.")
-    elif body_form == "Humanoid":
-        st.caption("Humanoid has no signature ability, so this has no effect.")
+# Signature-ability toggle. Its label is the specific ability when a form is
+# chosen, and generic otherwise. Hidden entirely for Humanoid (no signature).
+signature_choice = None
+if not (choose_form and body_form == "Humanoid"):
+    if body_form is not None:
+        label = SIGNATURE_TOGGLE_LABELS[body_form]
     else:
-        st.caption(f"Signature ability to include: {SIGNATURE_LABELS[body_form]}")
+        label = "Apply signature ability"
+    if st.toggle(label):
+        signature_choice = True
+    if body_form is None:
+        st.caption("Applies the signature ability of whichever form is rolled (Humanoid has none).")
 
-# Initialize session state for storing generated output
-if "statblock" not in st.session_state:
-    st.session_state.statblock = ""
-
-# When button is clicked, regenerate and store the new statblock
+# --- Generate (stored in session so expanders don't trigger regeneration) ---
 if st.button("Generate Cacodemon"):
-    demon = generate_cacodemon_base(RANK, body_form=body_form, signature_choice=signature_choice)
-    st.session_state.statblock = format_cacodemon_statblock(demon)
+    st.session_state.demon = generate_cacodemon_base(
+        RANK, body_form=body_form, signature_choice=signature_choice
+    )
 
-# Show the current statblock from session state (even if inputs are changed)
-if st.session_state.statblock:
-    st.subheader("Generated Cacodemon")
-    st.text(st.session_state.statblock)
+# --- Render ---
+demon = st.session_state.get("demon")
+if demon:
+    wing_status = "Winged" if demon["body_form"][1] else "Non-Winged"
+    st.subheader(f"{demon['rank']} Cacodemon")
+    st.markdown(f"**Form:** {demon['body_form'][0]}, {wing_status}")
+
+    # Special Abilities, right after the form. Each shows only its name until
+    # expanded. Base Resistances and Telepathy are baseline traits shown here too.
+    st.markdown("**Special Abilities**")
+    with st.expander("Base Resistances"):
+        st.write("Resists acidic, cold, electrical, fire, poisonous, and seismic damage")
+    with st.expander("Telepathy"):
+        st.write("Can communicate telepathically with any creatures they encounter")
+
+    for ab in demon["abilities"]["abilities"]:
+        with st.expander(ab["name"]):
+            st.write(ab["description"])
+            detail = ab["detail"][0]
+            if detail != "" and detail != "(":
+                if isinstance(detail, dict):
+                    for spell_info in detail.values():
+                        st.write(f"{spell_info['spell']}: {spell_info['usage_string']}")
+                else:
+                    st.write(f"**Detail:** {detail}")
+
+    # Full stat block, collapsed by default.
+    with st.expander("Stats", expanded=False):
+        st.text(format_stats_block(demon))
