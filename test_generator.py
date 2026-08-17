@@ -16,6 +16,7 @@ from Cacodemon_Generator import (
     generate_cacodemon_base,
     roll_abilities_with_cost_limit,
 )
+from imp_names import IMP_NAMES
 
 
 def names(result):
@@ -154,6 +155,110 @@ def test_imp_hit_points_is_4d8():
     hp = generate_cacodemon_base("Imp")["hit_points"]
     assert isinstance(hp, int)
     assert 4 <= hp <= 32  # 4d8
+
+
+# --- Naming -----------------------------------------------------------------
+
+def test_generated_imp_has_a_name():
+    from Cacodemon_Generator import reset_used_names
+    reset_used_names()
+    demon = generate_cacodemon_base("Imp")
+    assert demon["name"] in IMP_NAMES
+
+
+def test_names_are_unique_until_pool_exhausted():
+    from Cacodemon_Generator import assign_imp_name, reset_used_names
+    reset_used_names()
+    names = [assign_imp_name() for _ in range(len(IMP_NAMES))]
+    assert len(set(names)) == len(IMP_NAMES)  # every name used exactly once
+
+
+def test_pool_resets_after_exhaustion():
+    from Cacodemon_Generator import assign_imp_name, reset_used_names
+    reset_used_names()
+    for _ in range(len(IMP_NAMES)):
+        assign_imp_name()
+    # Pool is now exhausted; the next call must still return a valid name.
+    extra = assign_imp_name()
+    assert extra in IMP_NAMES
+
+
+def test_used_names_persist_to_disk():
+    # A used name must be crossed off on disk, not just in memory: reading the
+    # store back from disk must show it.
+    from Cacodemon_Generator import assign_imp_name, reset_used_names, _load_used_names
+    reset_used_names()
+    name = assign_imp_name()
+    assert name in _load_used_names()
+
+
+# --- Ability book-cost symbols and clean Flying text ------------------------
+
+def test_all_abilities_carry_book_cost():
+    result = roll_abilities_with_cost_limit(
+        2, False, "Man-Sized", "Arachnine", True, "Imp", signature_choice=True
+    )
+    assert all("book_cost" in a for a in result["abilities"])
+
+
+def test_signature_and_flying_book_cost_symbols():
+    poison = roll_abilities_with_cost_limit(
+        1, False, "Man-Sized", "Arachnine", False, "Imp", signature_choice=True
+    )
+    assert next(a for a in poison["abilities"] if a["name"] == "Poison")["book_cost"] == "*"
+
+    winged = roll_abilities_with_cost_limit(
+        1, False, "Man-Sized", "Humanoid", True, "Imp", signature_choice=None
+    )
+    assert next(a for a in winged["abilities"] if a["name"] == "Flying")["book_cost"] == "####"
+
+
+def test_flying_description_has_no_dive_text():
+    result = roll_abilities_with_cost_limit(
+        1, False, "Man-Sized", "Scolopendrine", True, "Imp", signature_choice=True
+    )
+    flying = next(a for a in result["abilities"] if a["name"] == "Flying")
+    assert "dive" not in flying["description"].lower()
+
+
+def test_flying_cost_is_half_even_with_custom_description():
+    result = roll_abilities_with_cost_limit(
+        1, False, "Man-Sized", "Humanoid", True, "Imp", signature_choice=None
+    )
+    flying = next(a for a in result["abilities"] if a["name"] == "Flying")
+    assert flying["cost"] == 0.5  # #### = 4 * 0.125
+
+
+def test_dive_attack_worth_four_hash():
+    result = roll_abilities_with_cost_limit(
+        1, False, "Man-Sized", "Wyverine", True, "Imp", signature_choice=True
+    )
+    dive = next(a for a in result["abilities"] if a["name"] == "Dive Attack")
+    assert dive["book_cost"] == "####"
+    assert dive["cost"] == 0.5
+
+
+# --- Resolved */# symbols and summing to the allotment ---------------------
+
+def test_value_symbols_resolves_to_book_notation():
+    from Cacodemon_Generator import value_symbols
+    assert value_symbols(1.0) == "*"
+    assert value_symbols(2.0) == "**"
+    assert value_symbols(0.5) == "####"
+    assert value_symbols(0.25) == "##"
+    assert value_symbols(0.125) == "#"
+    assert value_symbols(1.5) == "*####"
+    assert value_symbols(0) == ""
+
+
+def test_special_ability_total_never_exceeds_allotment():
+    # Every generated Imp's abilities must sum to at most ** (2.0); they must
+    # not overshoot the allotment.
+    for _ in range(200):
+        r = roll_abilities_with_cost_limit(
+            2, False, "Man-Sized", "Arachnine", False, "Imp", signature_choice=None
+        )
+        assert r["total_cost"] <= 2.0 + 1e-9, r["total_cost"]
 
 
 def test_stats_block_has_hit_points_resistances_and_languages():

@@ -1,5 +1,5 @@
 import streamlit as st
-from Cacodemon_Generator import generate_cacodemon_base, format_stats_block
+from Cacodemon_Generator import generate_cacodemon_base, format_stats_block, value_symbols
 
 
 st.title("Imp Generator")
@@ -33,8 +33,6 @@ if not (choose_form and body_form == "Humanoid"):
         label = "Apply signature form ability"
     if st.toggle(label):
         signature_choice = True
-    if body_form is None:
-        st.caption("Applies the signature form ability of whichever form is rolled (Humanoid has none).")
 
 # --- Generate (stored in session so expanders don't trigger regeneration) ---
 if st.button("Generate Cacodemon"):
@@ -46,16 +44,16 @@ if st.button("Generate Cacodemon"):
 demon = st.session_state.get("demon")
 if demon:
     wing_status = "Winged" if demon["body_form"][1] else "Non-Winged"
-    st.subheader(f"{demon['rank']} Cacodemon")
+    st.subheader(demon["name"])
     st.markdown(f"**Form:** {demon['body_form'][0]}, {wing_status}")
 
     # Special Abilities, right after the form. Each shows only its name until
     # expanded. (Base Resistances and Telepathy are constant, so they live in
     # the Stats block instead -- Telepathy via the Languages line.)
-    st.markdown("**Special Abilities**")
+    st.markdown(f"**Special Abilities** — {value_symbols(demon['abilities']['total_cost'])} total")
 
     for ab in demon["abilities"]["abilities"]:
-        with st.expander(ab["name"]):
+        with st.expander(f"{ab['name']} ({value_symbols(ab['cost'])})"):
             st.write(ab["description"])
             detail = ab["detail"][0]
             if detail != "" and detail != "(":

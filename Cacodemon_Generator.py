@@ -4,9 +4,13 @@
 # In[1]:
 
 
+import json
+import os
 import random
 import pandas as pd
 import re
+
+from imp_names import IMP_NAMES
 
 
 # In[3]:
@@ -326,7 +330,15 @@ def compute_ability_cost(cost_str):
         return cost_str.count('#') * 0.125
     else:
         return None  # For "varies" or "* or more"
-    
+
+
+def value_symbols(cost):
+    """Render a numeric special-ability cost in the book's */# notation,
+    where * = 1 and # = 1/8. E.g. 1.5 -> '*####', 0.5 -> '####'."""
+    eighths = round(cost / 0.125)
+    return "*" * (eighths // 8) + "#" * (eighths % 8)
+
+
 # Additional info:
 def ability_details(name, rank):
     info = ""
@@ -618,21 +630,34 @@ def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_f
     seen = set()
     total = 0.0
 
-    def add_builtin(name, description_override=None):
-        """Add a built-in ability with cost 1."""
-        desc = description_override or df_full.loc[df_full["Name"] == name, "Description"].iloc[0]
-        cost_str = description_override or df_full.loc[df_full["Name"] == name, "Cost"].iloc[0]
-        cost_val = compute_ability_cost(cost_str) or 1
+    def add_builtin(name, book_cost=None, description_override=None):
+        """Add a form/wings ability. book_cost and description default to the
+        table row; pass them explicitly for abilities not in the table
+        (e.g. Dive Attack). The cost always comes from the book_cost symbols."""
+        row = df_full.loc[df_full["Name"] == name]
+        if book_cost is None:
+            book_cost = row["Cost"].iloc[0]
+        if description_override is not None:
+            desc = description_override
+        elif not row.empty:
+            desc = row["Description"].iloc[0]
+        else:
+            desc = ""
+        cost_val = compute_ability_cost(book_cost) or 1
         detail = ability_details(name, None)
 
-        selected.append({"roll": "auto", "name": name, "cost": cost_val, "description": desc, "detail":detail})
+        selected.append({"roll": "auto", "name": name, "cost": cost_val,
+                         "book_cost": book_cost, "description": desc, "detail": detail})
         seen.add(name)
         return cost_val
 
     # Built-in logic based on wings and body form. Flying is always granted to
     # winged forms; the signature ability depends on signature_choice.
     if has_wings and "Flying" not in seen:
-        total += add_builtin("Flying")
+        total += add_builtin(
+            "Flying",
+            description_override="The Cacodemon can fly at the speed noted for its body form."
+        )
 
     if signature_choice is None:
         include_signature = random.random() < 0.9
@@ -651,15 +676,23 @@ def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_f
             if has_wings and "Dive Attack" not in seen:
                 total += add_builtin(
                     "Dive Attack",
-                    "The Cacodemon can make dive attacks that deal double damage. "
-                    "If a dive hits a victim smaller than itself, it grabs and carries him off, "
-                    "unless the victim makes a successful size-adjusted Paralysis save."
+                    book_cost="####",
+                    description_override=(
+                        "The Cacodemon can make dive attacks that deal double damage. "
+                        "If a dive hits a victim smaller than itself, it grabs and carries him off, "
+                        "unless the victim makes a successful size-adjusted Paralysis save."
+                    ),
                 )
             elif not has_wings and "Berserk" not in seen:
                 total += add_builtin("Berserk")
 
-    # Roll additional abilities until we reach the cost goal
-    while total < target_cost:
+    # Roll additional abilities to fill the allotment WITHOUT going over it, so
+    # the values add up to (at most) target_cost. Abilities that would overshoot
+    # are skipped. The attempt cap prevents an unfillable remainder (possible
+    # only with an odd, non-1/8 cost) from looping forever.
+    attempts = 0
+    while total < target_cost - 1e-9 and attempts < 200:
+        attempts += 1
         abil = roll_special_ability()
         name, cost_str = abil["name"], abil["cost"]
         if name in seen or should_reroll_ability(name, can_speak, size_category):
@@ -669,6 +702,11 @@ def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_f
         abil["detail"] = ability_details(name, rank)
         if abil["detail"][1] > 0:
             cost_val = abil["detail"][1]
+        if total + cost_val > target_cost + 1e-9:
+            continue  # would exceed the allotment -> leave it out
+
+        abil["book_cost"] = cost_str   # raw book symbols (*, #, varies)
+        abil["cost"] = cost_val        # numeric value for internal budget use
         selected.append(abil)
         seen.add(name)
         total += cost_val
@@ -718,6 +756,44 @@ def size_calc(hd, bme):
 
 
 # In[13]:
+
+
+# Used names are crossed off a persistent list on disk, next to this module, so
+# they are not reused across runs. (On an ephemeral host such as Streamlit Cloud
+# the file is reset whenever the container is rebuilt by a reboot or redeploy.)
+_USED_NAMES_FILE = os.path.join(os.path.dirname(__file__), "used_names.json")
+
+
+def _load_used_names():
+    try:
+        with open(_USED_NAMES_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except (FileNotFoundError, ValueError):
+        return set()
+
+
+def _save_used_names(used):
+    with open(_USED_NAMES_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(used), f)
+
+
+def reset_used_names():
+    """Clear the persistent record of used names."""
+    _save_used_names(set())
+
+
+def assign_imp_name():
+    """Return a name not yet crossed off the list and cross it off on disk.
+    When every name has been used, the list starts over."""
+    used = _load_used_names()
+    available = [n for n in IMP_NAMES if n not in used]
+    if not available:
+        used = set()
+        available = list(IMP_NAMES)
+    name = random.choice(available)
+    used.add(name)
+    _save_used_names(used)
+    return name
 
 
 def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signature_choice = None, uses_speech = False):
@@ -784,6 +860,7 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
     spellcasting = generate_spellcasting(rank, can_speak)
     
     return {
+        "name": assign_imp_name(),
         "rank": rank,
         "num_special_abilities": traits["special_abilities"],
         "can_speak": can_speak,
