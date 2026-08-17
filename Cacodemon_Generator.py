@@ -773,6 +773,7 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
     hd_num = int(re.sub(r'\D', '', primary_stats["hd"]))
     attack_throw = str(max(-9, 11-hd_num)) + "+"
     size = size_calc(hd_num, combat_stats["bme"])
+    hit_points = sum(random.randint(1, 8) for _ in range(hd_num))  # hd_num d8 (4d8 for an Imp)
     
     abilities = roll_abilities_with_cost_limit(traits["special_abilities"], can_speak, size["category"], body_form, has_wings, rank, signature_choice)
     
@@ -790,6 +791,7 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
         "primary_stats": primary_stats,
         "combat_stats": combat_stats,
         "attack": attack_throw,
+        "hit_points": hit_points,
         "spells": spellcasting,
         "abilities": abilities,
         "size: ": size
@@ -905,97 +907,6 @@ def print_cacodemon_statblock(cacodemon):
         print("Unrecognized spell format.")
 
 
-def format_cacodemon_statblock(cacodemon):
-    lines = []
-
-    lines.append(f"{cacodemon['rank']} Cacodemon")
-    wing_status = "Winged" if cacodemon['body_form'][1] else "Non-Winged"
-    lines.append(f"{'Form:':15} {cacodemon['body_form'][0]}, {wing_status}")
-    lines.append("-" * 50)
-
-    size_data = cacodemon.get('size: ', {})
-    combat = cacodemon.get('combat_stats', {})
-    movement = combat.get('movement', {})
-    primary = cacodemon.get('primary_stats', {})
-
-    myAC = primary.get('ac', 0)
-    flySpeed = 'None'
-    has_flying = False
-    landSpeed = movement.get('land', '-')
-    sense = 'None'
-
-    for ab in cacodemon['abilities']['abilities']:
-        if ab['name'] == "Flying":
-            has_flying = True
-            flySpeed = movement.get('fly', '-')
-        if ab['name'] == "Special Senses":
-            sense = ab['detail'][0]
-
-    if 'or' in landSpeed:
-        options = landSpeed.split('or')
-        landSpeed = options[1].strip() if has_flying else options[0].strip()
-
-    lines.append(f"{'Size:':15} {size_data.get('category', 'Unknown')}")
-    lines.append(f"{'Speed (land):':15} {landSpeed}")
-    lines.append(f"{'Speed (fly):':15} {flySpeed}")
-    lines.append(f"{'Speed (climb):':15} {movement.get('climb', '-')}")
-    lines.append(f"{'Speed (swim):':15} {movement.get('swim', '-')}")
-    lines.append(f"{'Armor Class:':15} {myAC}")
-    lines.append(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
-    lines.append(f"{'Attacks:':15} {combat.get('attack_routine', '-')}, {cacodemon['attack']}")
-    lines.append(f"{'Damage:':15} {', '.join(combat.get('damage', []))}")
-    lines.append(f"{'Save:':15} {primary.get('save', '-')}")
-    lines.append(f"{'Morale:':15} {primary.get('morale', '-')}")
-    lines.append(f"{'Vision:':15} Lightless Vision (90')")
-    lines.append(f"{'Other Senses:':15} {sense}")
-    lines.append("")
-
-    lines.append("Special Abilities:")
-    lines.append("-" * 50)
-
-    lines.append("\nBase Resistances:")
-    lines.append(f"{'-' * 17}")
-    lines.append("Resists acidic, cold, electrical, fire, poisonous, and seismic damage")
-
-    lines.append("\nTelepathy")
-    lines.append(f"{'-' * 9}")
-    lines.append("Can communicate telepathically with any creatures they encounter")
-
-    for ab in cacodemon['abilities']['abilities']:
-        name = ab['name']
-        desc = ab['description']
-        lines.append(f"\n{name}")
-        lines.append(f"{'-' * len(name)}")
-        lines.append(desc)
-        if ab['detail'][0] != '' and ab['detail'][0] != "(":
-            lines.append("Detail:")
-            if isinstance(ab['detail'][0], dict):
-                for spell_info in ab['detail'][0].values():
-                    lines.append(f"  {spell_info['spell']}: {spell_info['usage_string']}")
-            else:
-                lines.append(f"  {ab['detail'][0]}")
-
-    lines.append("\nSpellcasting:")
-    lines.append("-" * 50)
-
-    spells_data = cacodemon.get("spells", "None")
-    if spells_data == "None":
-        lines.append("None")
-    elif isinstance(spells_data, dict) and "spells" in spells_data:
-        lines.append(f"Caster Level: {spells_data.get('caster_level', '?')}")
-        for level, spell_list in spells_data["spells"].items():
-            if isinstance(spell_list, list):
-                lines.append(f"{level}: {', '.join(spell_list)}")
-            elif isinstance(spell_list, str):
-                lines.append(f"{level}: {spell_list}")
-            else:
-                lines.append(f"{level}: [Unrecognized spell format]")
-    else:
-        lines.append("Unrecognized spell format.")
-
-    return "\n".join(lines)
-
-
 def format_stats_block(cacodemon):
     """Return just the Size -> Other Senses stat lines as text.
 
@@ -1026,6 +937,9 @@ def format_stats_block(cacodemon):
         options = landSpeed.split('or')
         landSpeed = options[1].strip() if has_flying else options[0].strip()
 
+    hp = cacodemon.get('hit_points', '-')
+    resistances = "Resists acidic, cold, electrical, fire, poisonous, and seismic damage"
+
     lines.append(f"{'Size:':15} {size_data.get('category', 'Unknown')}")
     lines.append(f"{'Speed (land):':15} {landSpeed}")
     lines.append(f"{'Speed (fly):':15} {flySpeed}")
@@ -1033,12 +947,15 @@ def format_stats_block(cacodemon):
     lines.append(f"{'Speed (swim):':15} {movement.get('swim', '-')}")
     lines.append(f"{'Armor Class:':15} {myAC}")
     lines.append(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
+    lines.append(f"{'Hit Points:':15} {hp}")
     lines.append(f"{'Attacks:':15} {combat.get('attack_routine', '-')}, {cacodemon['attack']}")
     lines.append(f"{'Damage:':15} {', '.join(combat.get('damage', []))}")
     lines.append(f"{'Save:':15} {primary.get('save', '-')}")
     lines.append(f"{'Morale:':15} {primary.get('morale', '-')}")
     lines.append(f"{'Vision:':15} Lightless Vision (90')")
     lines.append(f"{'Other Senses:':15} {sense}")
+    lines.append(f"{'Base Resistances:':15} {resistances}")
+    lines.append(f"{'Languages:':15} None (but uses Telepathy)")
 
     return "\n".join(lines)
 

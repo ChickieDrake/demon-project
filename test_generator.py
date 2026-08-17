@@ -148,3 +148,21 @@ def test_format_stats_block_has_stats_only():
     # It is ONLY the stats -- no abilities or spellcasting sections.
     assert "Special Abilities" not in block
     assert "Spellcasting" not in block
+
+
+def test_imp_hit_points_is_4d8():
+    hp = generate_cacodemon_base("Imp")["hit_points"]
+    assert isinstance(hp, int)
+    assert 4 <= hp <= 32  # 4d8
+
+
+def test_stats_block_has_hit_points_resistances_and_languages():
+    from Cacodemon_Generator import format_stats_block
+    demon = generate_cacodemon_base("Imp", body_form="Arachnine")
+    block = format_stats_block(demon)
+    assert "Base Resistances:" in block
+    lines = block.splitlines()
+    assert any(l.startswith("Languages:") and l.endswith("None (but uses Telepathy)") for l in lines)
+    # Hit Points appears directly under Hit Dice.
+    hd_idx = next(i for i, line in enumerate(lines) if line.startswith("Hit Dice:"))
+    assert lines[hd_idx + 1].startswith("Hit Points:")

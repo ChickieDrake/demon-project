@@ -2,7 +2,7 @@ import streamlit as st
 from Cacodemon_Generator import generate_cacodemon_base, format_stats_block
 
 
-st.title("Cacodemon Generator")
+st.title("Imp Generator")
 
 # This generator always produces Imps.
 RANK = "Imp"
@@ -28,13 +28,13 @@ body_form = st.selectbox("Body Form", FORMS) if choose_form else None
 signature_choice = None
 if not (choose_form and body_form == "Humanoid"):
     if body_form is not None:
-        label = SIGNATURE_TOGGLE_LABELS[body_form]
+        label = f"{SIGNATURE_TOGGLE_LABELS[body_form]} (signature form ability)"
     else:
-        label = "Apply signature ability"
+        label = "Apply signature form ability"
     if st.toggle(label):
         signature_choice = True
     if body_form is None:
-        st.caption("Applies the signature ability of whichever form is rolled (Humanoid has none).")
+        st.caption("Applies the signature form ability of whichever form is rolled (Humanoid has none).")
 
 # --- Generate (stored in session so expanders don't trigger regeneration) ---
 if st.button("Generate Cacodemon"):
@@ -50,12 +50,9 @@ if demon:
     st.markdown(f"**Form:** {demon['body_form'][0]}, {wing_status}")
 
     # Special Abilities, right after the form. Each shows only its name until
-    # expanded. Base Resistances and Telepathy are baseline traits shown here too.
+    # expanded. (Base Resistances and Telepathy are constant, so they live in
+    # the Stats block instead -- Telepathy via the Languages line.)
     st.markdown("**Special Abilities**")
-    with st.expander("Base Resistances"):
-        st.write("Resists acidic, cold, electrical, fire, poisonous, and seismic damage")
-    with st.expander("Telepathy"):
-        st.write("Can communicate telepathically with any creatures they encounter")
 
     for ab in demon["abilities"]["abilities"]:
         with st.expander(ab["name"]):
