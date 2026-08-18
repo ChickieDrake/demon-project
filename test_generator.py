@@ -283,6 +283,18 @@ def test_signature_probability_zero_never_forces():
     assert not any(_forced_poison(0.0) for _ in range(30))
 
 
+# --- Resistance excludes the imp's innate resistances ----------------------
+
+def test_resistance_never_lists_natural_resistances():
+    # Imps are already resistant to these, so a rolled Resistance must never
+    # pick them when sampling specific damage types.
+    from Cacodemon_Generator import ability_details
+    natural = ["Acidic", "Cold", "Electrical", "Fire", "Poisonous", "Seismic"]
+    for _ in range(1000):
+        info = ability_details("Resistance", "Imp")[0]
+        assert not any(t in info for t in natural), info
+
+
 def test_stats_block_has_hit_points_resistances_and_languages():
     from Cacodemon_Generator import format_stats_block
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")

@@ -508,6 +508,12 @@ def ability_details(name, rank):
         cost = 1
         
     elif name == "Resistance":
+        # Imps are already naturally resistant to acidic, cold, electrical,
+        # fire, poisonous, and seismic damage, so exclude those when rolling
+        # specific damage types (re-roll them out) -- resisting them again is
+        # redundant.
+        natural_resistances = {"Acidic", "Cold", "Electrical", "Fire", "Poisonous", "Seismic"}
+        resist_types = [t for t in damage_types if t not in natural_resistances]
         cost = 0
         selector = random.randint(1, 11)
         if selector == 1:
@@ -523,16 +529,16 @@ def ability_details(name, rank):
             info = "Resists all Energy Damage"
             cost += .5
         elif selector == 5:
-            info = "Resists: " + str(random.sample(damage_types, 6))
+            info = "Resists: " + str(random.sample(resist_types, 6))
             cost += .5
         elif selector == 6:
-            info = "Resists: " + str(random.sample(damage_types, 3))
+            info = "Resists: " + str(random.sample(resist_types, 3))
             cost += .25
         elif selector == 7:
             info = "Resists Mundane Physical Damage"
             cost += .25
         elif selector == 8:
-            info = "Resists Mundane " + str(random.sample(damage_types, 3)) + " damage"
+            info = "Resists Mundane " + str(random.sample(resist_types, 3)) + " damage"
             cost += .125
         elif selector == 9:
             info = "Resists all Enchantment effects"
@@ -558,16 +564,16 @@ def ability_details(name, rank):
             info += "; Resists all Energy Damage"
             cost += .5
         elif selector == 5:
-            info += "; Resists: " + str(random.sample(damage_types, 6))
+            info += "; Resists: " + str(random.sample(resist_types, 6))
             cost += .5
         elif selector == 6:
-            info += "; Resists: " + str(random.sample(damage_types, 3))
+            info += "; Resists: " + str(random.sample(resist_types, 3))
             cost += .25
         elif selector == 7:
             info += "; Resists Mundane Physical Damage"
             cost += .25
         elif selector == 8:
-            info += "; Resists Mundane " + str(random.sample(damage_types, 3)) + " damage"
+            info += "; Resists Mundane " + str(random.sample(resist_types, 3)) + " damage"
             cost += .125
         elif selector == 9:
             info += "; Resists all Enchantment effects"
