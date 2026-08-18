@@ -71,6 +71,8 @@ if demon:
                 else:
                     st.write(f"**Detail:** {detail}")
 
-    # Full stat block, collapsed by default.
-    with st.expander("Stats", expanded=False):
+    # Stats as its own section (heading styled like Form / Special Abilities),
+    # with a show/hide control underneath rather than an ability-like expander.
+    st.markdown("**Stats**")
+    if st.toggle("Show stats"):
         st.text(format_stats_block(demon))
