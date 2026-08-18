@@ -261,6 +261,28 @@ def test_special_ability_total_never_exceeds_allotment():
         assert r["total_cost"] <= 2.0 + 1e-9, r["total_cost"]
 
 
+# --- Signature choice as a probability -------------------------------------
+
+def _forced_poison(sig):
+    r = roll_abilities_with_cost_limit(
+        2, False, "Man-Sized", "Arachnine", False, "Imp", signature_choice=sig
+    )
+    return any(a["name"] == "Poison" and a["roll"] == "auto" for a in r["abilities"])
+
+
+def test_signature_probability_half_forces_about_half():
+    forced = sum(_forced_poison(0.5) for _ in range(2000))
+    assert 0.4 < forced / 2000 < 0.6  # ~50%, not ~100%
+
+
+def test_signature_probability_one_always_forces():
+    assert all(_forced_poison(1.0) for _ in range(30))
+
+
+def test_signature_probability_zero_never_forces():
+    assert not any(_forced_poison(0.0) for _ in range(30))
+
+
 def test_stats_block_has_hit_points_resistances_and_languages():
     from Cacodemon_Generator import format_stats_block
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")

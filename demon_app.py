@@ -31,8 +31,16 @@ if not (choose_form and body_form == "Humanoid"):
         label = f"{SIGNATURE_TOGGLE_LABELS[body_form]} (signature form ability)"
     else:
         label = "Apply signature form ability"
-    if st.toggle(label):
+    # On -> always force the signature. Off -> never force it (fully random: it
+    # only turns up if rolled like any other ability). Percent -> force it with
+    # the chosen probability.
+    mode = st.radio(label, ["On", "Off (fully random)", "Percent"], index=0, horizontal=True)
+    if mode == "On":
         signature_choice = True
+    elif mode == "Off (fully random)":
+        signature_choice = False
+    else:
+        signature_choice = st.slider("Chance to apply it (%)", 0, 100, 50) / 100
 
 # --- Generate (stored in session so expanders don't trigger regeneration) ---
 if st.button("Generate Cacodemon"):

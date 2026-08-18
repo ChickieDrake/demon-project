@@ -661,8 +661,10 @@ def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_f
 
     if signature_choice is None:
         include_signature = random.random() < 0.9
+    elif isinstance(signature_choice, bool):
+        include_signature = signature_choice          # True -> always, False -> never
     else:
-        include_signature = signature_choice
+        include_signature = random.random() < signature_choice   # probability in [0, 1]
 
     if include_signature:
         if body_form == "Arachnine" and "Poison" not in seen:
