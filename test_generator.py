@@ -425,6 +425,61 @@ def test_special_senses_line_is_not_polluted_by_the_note():
     raise AssertionError("no Special Senses rolled in sample")
 
 
+# --- Structured stat rows + the abilities one-liner ------------------------
+
+def test_stat_block_rows_are_label_value_pairs_hiding_unused():
+    from Cacodemon_Generator import stat_block_rows
+    demon = _render_demon(
+        movement={"land": "20'/60'", "fly": "40'/120'", "climb": None, "swim": None},
+        abilities=[],                                  # no Flying, no Special Senses
+        coverage=_coverage(base={("Fire", "mundane")}),
+    )
+    rows = dict(stat_block_rows(demon))
+    assert rows["Size"] == "Man-Sized"
+    assert rows["Speed (land)"] == "20'/60'"
+    assert "Base Resistances" in rows
+    for hidden in ("Speed (fly)", "Speed (climb)", "Speed (swim)",
+                   "Other Senses", "Immunities", "Additional Resistances"):
+        assert hidden not in rows
+
+
+def test_ability_oneliner_appends_a_tag_when_present():
+    from Cacodemon_Generator import ability_oneliner
+    assert ability_oneliner(_ability("Aura", "Fire", {"tag": "Fire"})) == "Aura (Fire)"
+    assert ability_oneliner(
+        _ability("Poison", "onset...", {"tag": "instant, death"})) == "Poison (instant, death)"
+
+
+def test_ability_oneliner_is_name_only_without_a_tag():
+    from Cacodemon_Generator import ability_oneliner
+    assert ability_oneliner(_ability("Charge", "")) == "Charge"
+    # A stat-folded ability has structured data but no 'tag' -> name only.
+    assert ability_oneliner(_ability("Tough", "AC Increased by 2", {"ac_bonus": 2})) == "Tough"
+
+
+def test_abilities_oneliner_joins_every_ability():
+    from Cacodemon_Generator import abilities_oneliner
+    demon = {"abilities": {"abilities": [
+        _ability("Aura", "Fire", {"tag": "Fire"}),
+        _ability("Flying"),
+        _ability("Poison", "onset...", {"tag": "instant, death"}),
+    ]}}
+    assert abilities_oneliner(demon) == "Aura (Fire), Flying, Poison (instant, death)"
+
+
+def test_aura_detail_carries_its_damage_type_as_a_tag():
+    from Cacodemon_Generator import ability_details
+    info, cost, structured = ability_details("Aura", "Imp")
+    assert structured["tag"] == info
+
+
+def test_poison_detail_tag_summarizes_onset_and_effect():
+    from Cacodemon_Generator import ability_details
+    info, cost, structured = ability_details("Poison", "Imp")
+    onset, effect = structured["tag"].split(", ")
+    assert onset in info and effect in info
+
+
 # --- Hiding unused stat-block entries --------------------------------------
 
 def _coverage(immune=frozenset(), base=frozenset(), additional=frozenset()):

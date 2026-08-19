@@ -676,6 +676,19 @@ def _note_stat_folding(abilities):
         a["detail"][0] = f"{base} · {_STAT_FOLD_NOTE}" if base else _STAT_FOLD_NOTE.capitalize()
 
 
+def ability_oneliner(ability):
+    """One ability as it appears in the summary line: the name, plus a short
+    rolled tag in parentheses when it has one. Stat-folded and detail-less
+    abilities show the name alone (their specifics live in the stat block)."""
+    tag = (ability["detail"][2] or {}).get("tag")
+    return f"{ability['name']} ({tag})" if tag else ability["name"]
+
+
+def abilities_oneliner(cacodemon):
+    """The whole special-abilities summary line for the stat block."""
+    return ", ".join(ability_oneliner(a) for a in cacodemon["abilities"]["abilities"])
+
+
 # Additional info:
 def ability_details(name, rank):
     info = ""
@@ -711,8 +724,9 @@ def ability_details(name, rank):
     
     if name == 'Aura':
         info = random.choice(aura_damage_types)
+        structured = {"tag": info}
         cost = 1
-        
+
     elif name == 'Bonus Attack':
         if random.random() > .5:
             info = "One extra attack, damage equal to its primary attack"
@@ -724,6 +738,7 @@ def ability_details(name, rank):
             
     elif name == 'Breath Weapon':
         info = random.choice(aura_damage_types)
+        structured = {"tag": info}
         cost = 1
         
     elif name == 'Class Powers/Proficiencies':
@@ -734,21 +749,26 @@ def ability_details(name, rank):
         while len(selected) < totalPowers:
             power = random.choice(class_powers)
             if power in seen_powers:
-                continue  # Skip "varies"/non-numeric costs or duplicates
+                continue  # no duplicate powers
 
             selected.append(power)
-            seen_powers.add(name)
+            seen_powers.add(power)
         info = str(selected)
+        structured = {"tag": ", ".join(selected)}
         cost = .125 * totalPowers
         
     elif name == 'Grab/Restrain':
         selector = random.randint(1, 20)
         if selector <= 14:
             info = "Constriction attack that deals damage equal to its primary attack and restrains any creature struck that is smaller than the cacodemon"
+            tag = "constriction"
         elif selector in (15, 16, 17):
             info =  "If it hits a creature smaller than itself with at least two of its secondary attacks, the creature struck must make a successful size-adjusted Paralysis save or be grabbed"
+            tag = "grab, 2+ secondary hits"
         elif selector in (18, 19, 20):
             info = "if it hits a creature smaller than itself with its primary attack, the creature struck must make a successful size-adjusted Paralysis save or be grabbed."
+            tag = "grab, primary hit"
+        structured = {"tag": tag}
         cost = 1
         
     elif name == "Immunity":
@@ -762,18 +782,20 @@ def ability_details(name, rank):
 
     elif name == "Paralysis":
         selector = random.randint(1, 6)
-        if selector <= 2:
-            info = "Paralysis lasts 1d10 rounds"
-        else:
-            info = "Paralysis lasts 2d4 turns"
+        dur = "1d10 rounds" if selector <= 2 else "2d4 turns"
+        info = f"Paralysis lasts {dur}"
+        structured = {"tag": dur}
         cost = 1
-            
+
     elif name == "Petrification":
         selector = random.randint(1, 6)
         if selector <= 3:
             info = "Cacodemon petrifies those that behold its gaze, as Medusa"
+            tag = "gaze"
         else:
             info = "Cacodemon petrifies those that are struck by its attacks"
+            tag = "on hit"
+        structured = {"tag": tag}
         cost = 2
             
     elif name == "Poison":
@@ -802,6 +824,7 @@ def ability_details(name, rank):
             effect = "error"
         
         info = "onset time: " + onset + "; effect: " + effect
+        structured = {"tag": f"{onset}, {effect}"}
         cost = 1
         
     elif name == "Resistance":
@@ -837,6 +860,7 @@ def ability_details(name, rank):
     elif name == "Spell-like Abilities":
         sla_detail = generate_spell_like_abilities(rank)
         info = sla_detail[0]
+        structured = {"tag": ", ".join(v["spell"] for v in info.values())}
         cost = sla_detail[1]
 
     return [info, cost, structured]
@@ -1249,22 +1273,18 @@ def _is_blank(value):
     return value is None or str(value).strip().lower() in ("", "-", "none")
 
 
-def format_stats_block(cacodemon):
-    """Return the stat lines as text, omitting unused ones: any Speed that is
-    None, and Other Senses / Immunities / Additional Resistances when empty.
-
-    Land speed depends on whether the demon can fly, and Other Senses come from
-    the Special Senses ability if present.
+def stat_block_rows(cacodemon):
+    """The stat block as ordered (label, value) pairs, omitting unused ones: any
+    Speed that is blank, and Other Senses / Immunities / Additional Resistances
+    when empty. Ability effects (Tough, Berserk, Swift, ...) are already folded
+    in. This is the single source of truth for both the text and HTML renderers.
     """
-    lines = []
-
     size_data = cacodemon.get('size: ', {})
     combat = cacodemon.get('combat_stats', {})
     primary = cacodemon.get('primary_stats', {})
 
     eff = effective_stat_block(cacodemon)   # AC/attack/morale/speeds after folding
     movement = eff['movement']
-    myAC = eff['ac']
     flySpeed = 'None'
     has_flying = False
     landSpeed = movement.get('land', '-')
@@ -1276,41 +1296,44 @@ def format_stats_block(cacodemon):
             flySpeed = movement.get('fly', '-')
         if ab['name'] == "Special Senses":
             # Read from structured data so the folding note on detail[0] does
-            # not leak into the Other Senses line.
+            # not leak into the Other Senses value.
             sense = (ab['detail'][2] or {}).get('sense') or ab['detail'][0]
 
-    if 'or' in landSpeed:
+    if 'or' in str(landSpeed):
         options = landSpeed.split('or')
         landSpeed = options[1].strip() if has_flying else options[0].strip()
 
-    hp = cacodemon.get('hit_points', '-')
     resolved = cacodemon.get("coverage") or _resolve_demon_coverage(
         cacodemon['abilities']['abilities']
     )
 
-    lines.append(f"{'Size:':15} {size_data.get('category', 'Unknown')}")
-    for label, value in (("Speed (land):", landSpeed), ("Speed (fly):", flySpeed),
-                         ("Speed (climb):", movement.get('climb')),
-                         ("Speed (swim):", movement.get('swim'))):
+    rows = [("Size", size_data.get('category', 'Unknown'))]
+    for label, value in (("Speed (land)", landSpeed), ("Speed (fly)", flySpeed),
+                         ("Speed (climb)", movement.get('climb')),
+                         ("Speed (swim)", movement.get('swim'))):
         if not _is_blank(value):
-            lines.append(f"{label:15} {value}")
-    lines.append(f"{'Armor Class:':15} {myAC}")
-    lines.append(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
-    lines.append(f"{'Hit Points:':15} {hp}")
-    lines.append(f"{'Attacks:':15} {combat.get('attack_routine', '-')}{eff['attacks_suffix']}, {eff['attack']}")
-    lines.append(f"{'Damage:':15} {', '.join(combat.get('damage', []))}")
-    lines.append(f"{'Save:':15} {primary.get('save', '-')}")
-    lines.append(f"{'Morale:':15} {eff['morale']}")
-    lines.append(f"{'Vision:':15} Lightless Vision (90')")
+            rows.append((label, value))
+    rows.append(("Armor Class", eff['ac']))
+    rows.append(("Hit Dice", primary.get('hd', '-')))
+    rows.append(("Hit Points", cacodemon.get('hit_points', '-')))
+    rows.append(("Attacks", f"{combat.get('attack_routine', '-')}{eff['attacks_suffix']}, {eff['attack']}"))
+    rows.append(("Damage", ', '.join(combat.get('damage', []))))
+    rows.append(("Save", primary.get('save', '-')))
+    rows.append(("Morale", eff['morale']))
+    rows.append(("Vision", "Lightless Vision (90')"))
     if not _is_blank(sense):
-        lines.append(f"{'Other Senses:':15} {sense}")
+        rows.append(("Other Senses", sense))
     for label, text in coverage_stat_lines(resolved):
         # Base Resistances always shows; Immunities/Additional only when present.
         if label == "Base Resistances" or not _is_blank(text):
-            lines.append(f"{label + ':':24} {text}")
-    lines.append(f"{'Languages:':24} None (but uses Telepathy)")
+            rows.append((label, text))
+    rows.append(("Languages", "None (but uses Telepathy)"))
+    return rows
 
-    return "\n".join(lines)
+
+def format_stats_block(cacodemon):
+    """Render the stat block as plain aligned text."""
+    return "\n".join(f"{label + ':':24} {value}" for label, value in stat_block_rows(cacodemon))
 
 
 
