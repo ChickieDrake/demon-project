@@ -296,6 +296,29 @@ def test_immunity_and_resistance_never_cover_the_same_thing():
         assert cov["immune_effects"].isdisjoint(cov["additional_resist_effects"])
 
 
+# --- Hug requires a multi-attack form --------------------------------------
+
+def test_hug_is_rerolled_for_single_attack_forms():
+    # Arachnine (1 bite) and Monadine (1 envelopment) make a single attack, so
+    # "hits with more than half its attacks" is nonsensical -- re-roll Hug.
+    from Cacodemon_Generator import should_reroll_ability
+    assert should_reroll_ability("Hug", False, "Man-Sized", "Arachnine")
+    assert should_reroll_ability("Hug", False, "Man-Sized", "Monadine")
+
+
+def test_hug_is_allowed_for_multi_attack_forms():
+    from Cacodemon_Generator import should_reroll_ability
+    for form in ("Humanoid", "Scolopendrine", "Wyverine"):
+        assert not should_reroll_ability("Hug", False, "Man-Sized", form)
+
+
+def test_single_attack_forms_never_generate_hug():
+    for form in ("Arachnine", "Monadine"):
+        for _ in range(300):
+            demon = generate_cacodemon_base("Imp", body_form=form)
+            assert "Hug" not in [a["name"] for a in demon["abilities"]["abilities"]]
+
+
 def test_stats_block_has_hit_points_resistances_and_languages():
     from Cacodemon_Generator import format_stats_block
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")

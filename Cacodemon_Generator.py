@@ -746,13 +746,18 @@ def ability_details(name, rank):
 
     return [info, cost, structured]
 
-def should_reroll_ability(name, can_speak, size_category):
+def should_reroll_ability(name, can_speak, size_category, body_form):
     # Add game-specific logic here
     if name == "Spellcasting" and not can_speak:
         return True
     if name in {"Swallow Attack", "Topple and Fling"} and size_category not in {"Huge", "Gigantic", "Colossal"}:
         return True
     if name in {"Trample", "Vicious Attack"} and size_category not in {"Large", "Huge", "Gigantic", "Colossal"}:
+        return True
+    # Hug triggers on hitting with "more than half its attacks", which is
+    # meaningless for the single-attack forms -- Arachnine (1 bite) and Monadine
+    # (1 envelopment). See attack_routine in generate_form_combat_stats.
+    if name == "Hug" and body_form in {"Arachnine", "Monadine"}:
         return True
     return False
 
@@ -839,7 +844,7 @@ def roll_abilities_with_cost_limit(target_cost, can_speak, size_category, body_f
         attempts += 1
         abil = roll_special_ability()
         name, cost_str = abil["name"], abil["cost"]
-        if name in seen or should_reroll_ability(name, can_speak, size_category):
+        if name in seen or should_reroll_ability(name, can_speak, size_category, body_form):
             continue  # Skip duplicates or invalid ones
 
         cost_val = compute_ability_cost(cost_str) or 1
