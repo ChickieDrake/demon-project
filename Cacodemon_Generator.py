@@ -552,10 +552,16 @@ def _resolve_demon_coverage(abilities):
     imm = next((a for a in abilities if a["name"] == "Immunity"), None)
     res = next((a for a in abilities if a["name"] == "Resistance"), None)
 
-    immunity_clauses = imm["detail"][2]["clauses"] if imm else []
+    immunity_clauses = list(imm["detail"][2]["clauses"]) if imm else []
+    # Incorporeal grants immunity to all mundane damage; fold it in as an
+    # immunity source (the "silvered weapons at <=4 HD" caveat stays in its
+    # detail text, not the coverage math).
+    if any(a["name"] == "Incorporeal" for a in abilities):
+        immunity_clauses.append({"selector": 1, "picks": None})
+
     resistance_clauses = res["detail"][2]["clauses"] if res else []
 
-    if imm and res:
+    if immunity_clauses and res:
         immune_atoms, immune_effects = set(), set()
         for c in immunity_clauses:
             d, e = clause_atoms(c)
@@ -583,6 +589,91 @@ def coverage_stat_lines(resolved):
          describe_coverage(resolved["additional_resist_damage"],
                            resolved["additional_resist_effects"])),
     ]
+
+
+# --- Abilities that fold their effect directly into the stat block ----------
+
+def _scale_speed(speed, factor=1.25):
+    """Scale a movement string like "40'/120'" (or "40'/120' or 30'/90'") by
+    `factor`, rounding each value to the nearest 5'. Passes None/'-' through.
+    Swift's "+30' per 120'" works out to a flat 25% increase."""
+    if not speed or speed == '-':
+        return speed
+
+    def repl(m):
+        scaled = int(int(m.group(1)) * factor / 5 + 0.5) * 5
+        return f"{scaled}'"
+
+    return re.sub(r"(\d+)'", repl, speed)
+
+
+def _improve_attack_throw(attack, bonus):
+    """Apply an attack-roll bonus to a throw string like "7+": a bonus makes the
+    throw easier, so the target number drops."""
+    m = re.match(r"\s*(-?\d+)", attack or "")
+    return f"{int(m.group(1)) - bonus}+" if m else attack
+
+
+def effective_stat_block(cacodemon):
+    """Stat-block values after folding in the abilities that modify them:
+    Tough (AC), Berserk (attack throw + morale), Bonus Attack (attacks) and
+    Swift (speeds). Incorporeal is handled via the coverage resolver instead.
+    Pure and idempotent -- safe to call at render time."""
+    primary = cacodemon.get('primary_stats', {})
+    combat = cacodemon.get('combat_stats', {})
+    by_name = {a['name']: a for a in cacodemon.get('abilities', {}).get('abilities', [])}
+
+    ac = primary.get('ac', 0)
+    if 'Tough' in by_name:
+        ac += (by_name['Tough']['detail'][2] or {}).get('ac_bonus', 0)
+
+    attack = cacodemon.get('attack', '')
+    morale = primary.get('morale', 0)
+    if 'Berserk' in by_name:
+        attack = _improve_attack_throw(attack, 2)
+        morale = max(morale, 4)
+
+    movement = dict(combat.get('movement', {}))
+    if 'Swift' in by_name:
+        movement = {k: _scale_speed(v) for k, v in movement.items()}
+
+    attacks_suffix = ''
+    if 'Bonus Attack' in by_name:
+        s = by_name['Bonus Attack']['detail'][2] or {}
+        n = s.get('bonus_attacks', 1)
+        attacks_suffix = (f" +{n} bonus attack{'s' if n > 1 else ''} "
+                          f"({s.get('damage', 'primary')} dmg)")
+
+    return {"ac": ac, "attack": attack, "morale": morale,
+            "movement": movement, "attacks_suffix": attacks_suffix}
+
+
+# Ability effects that are folded into the stat block get a subtle note in their
+# detail so the reader knows not to apply them a second time.
+_STAT_FOLD_NOTE = "reflected in the stat block"
+_STAT_FOLD_SUMMARIES = {
+    "Berserk": "+2 to attack throw; Morale +4; immune to fear",
+    "Swift": "Speeds increased by 25%",
+    "Incorporeal": ("Immune to all mundane damage "
+                    "(silvered weapons count as extraordinary at 4 HD or less)"),
+}
+# Every ability whose effect shows up somewhere in the stat block: the five flat
+# folds plus the ones that were already reflected (Flying -> speed, Special
+# Senses -> Other Senses, Immunity/Resistance -> the coverage lines).
+_STAT_FOLDED_ABILITIES = {
+    "Tough", "Berserk", "Bonus Attack", "Swift", "Incorporeal",
+    "Flying", "Special Senses", "Immunity", "Resistance",
+}
+
+
+def _note_stat_folding(abilities):
+    """Append the subtle "reflected in the stat block" marker to each folded
+    ability's detail (supplying a short summary for ones with no detail text)."""
+    for a in abilities:
+        if a["name"] not in _STAT_FOLDED_ABILITIES:
+            continue
+        base = a["detail"][0] or _STAT_FOLD_SUMMARIES.get(a["name"], "")
+        a["detail"][0] = f"{base} · {_STAT_FOLD_NOTE}" if base else _STAT_FOLD_NOTE.capitalize()
 
 
 # Additional info:
@@ -625,8 +716,10 @@ def ability_details(name, rank):
     elif name == 'Bonus Attack':
         if random.random() > .5:
             info = "One extra attack, damage equal to its primary attack"
+            structured = {"bonus_attacks": 1, "damage": "primary"}
         else:
             info = "Two extra attacks, damage half its primary attack"
+            structured = {"bonus_attacks": 2, "damage": "half"}
         cost = .25
             
     elif name == 'Breath Weapon':
@@ -732,11 +825,13 @@ def ability_details(name, rank):
         ]
         sense = random.choice(sense_options)
         info = sense[0]
+        structured = {"sense": sense[0]}   # read for the Other Senses line
         cost = sense[1]
     
     elif name == "Tough":
         increase = random.randint(1, 4)
         info = "AC Increased by " + str(increase)
+        structured = {"ac_bonus": increase}
         cost = 0.25
         
     elif name == "Spell-like Abilities":
@@ -1012,6 +1107,9 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
     # coverage shown on the stat block.
     coverage = _resolve_demon_coverage(abilities["abilities"])
 
+    # Mark abilities whose effect is folded straight into the stat block.
+    _note_stat_folding(abilities["abilities"])
+
     return {
         "name": assign_imp_name(),
         "rank": rank,
@@ -1051,29 +1149,32 @@ def print_cacodemon_statblock(cacodemon):
 
     size_data = cacodemon.get('size: ', {})
     combat = cacodemon.get('combat_stats', {})
-    movement = combat.get('movement', {})
     primary = cacodemon.get('primary_stats', {})
-    
-    myAC = primary.get('ac', 0)
+
+    eff = effective_stat_block(cacodemon)   # AC/attack/morale/speeds after folding
+    movement = eff['movement']
+    myAC = eff['ac']
     flySpeed = 'None'
     has_flying = False
     landSpeed = movement.get('land', '-')
 
     sense = 'None'
-    
+
     for ab in cacodemon['abilities']['abilities']:
         if ab['name'] == "Flying":
             has_flying = True
             flySpeed = movement.get('fly', '-')
         if ab['name'] == "Special Senses":
-            sense = ab['detail'][0]
-    
+            # Read from structured data so the folding note on detail[0] does
+            # not leak into the Other Senses line.
+            sense = (ab['detail'][2] or {}).get('sense') or ab['detail'][0]
+
     if 'or' in landSpeed:
         options = landSpeed.split('or')
         # Choose based on flying
         landSpeed = options[1].strip() if has_flying else options[0].strip()
 
-    
+
 
 
 
@@ -1084,10 +1185,10 @@ def print_cacodemon_statblock(cacodemon):
     print(f"{'Speed (swim):':15} {movement.get('swim', '-')}")
     print(f"{'Armor Class:':15} {myAC}")
     print(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
-    print(f"{'Attacks:':15} {combat.get('attack_routine', '-')}, {cacodemon['attack']}")
+    print(f"{'Attacks:':15} {combat.get('attack_routine', '-')}{eff['attacks_suffix']}, {eff['attack']}")
     print(f"{'Damage:':15} {', '.join(combat.get('damage', []))}")
     print(f"{'Save:':15} {primary.get('save', '-')}")
-    print(f"{'Morale:':15} {primary.get('morale', '-')}")
+    print(f"{'Morale:':15} {eff['morale']}")
     vision = "Lightless Vision (90')"
     print(f"{'Vision:':15} {vision}")
     print(f"{'Other Senses:':15} {sense}")  # You can replace this with a real value if defined
@@ -1152,10 +1253,11 @@ def format_stats_block(cacodemon):
 
     size_data = cacodemon.get('size: ', {})
     combat = cacodemon.get('combat_stats', {})
-    movement = combat.get('movement', {})
     primary = cacodemon.get('primary_stats', {})
 
-    myAC = primary.get('ac', 0)
+    eff = effective_stat_block(cacodemon)   # AC/attack/morale/speeds after folding
+    movement = eff['movement']
+    myAC = eff['ac']
     flySpeed = 'None'
     has_flying = False
     landSpeed = movement.get('land', '-')
@@ -1166,7 +1268,9 @@ def format_stats_block(cacodemon):
             has_flying = True
             flySpeed = movement.get('fly', '-')
         if ab['name'] == "Special Senses":
-            sense = ab['detail'][0]
+            # Read from structured data so the folding note on detail[0] does
+            # not leak into the Other Senses line.
+            sense = (ab['detail'][2] or {}).get('sense') or ab['detail'][0]
 
     if 'or' in landSpeed:
         options = landSpeed.split('or')
@@ -1185,10 +1289,10 @@ def format_stats_block(cacodemon):
     lines.append(f"{'Armor Class:':15} {myAC}")
     lines.append(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
     lines.append(f"{'Hit Points:':15} {hp}")
-    lines.append(f"{'Attacks:':15} {combat.get('attack_routine', '-')}, {cacodemon['attack']}")
+    lines.append(f"{'Attacks:':15} {combat.get('attack_routine', '-')}{eff['attacks_suffix']}, {eff['attack']}")
     lines.append(f"{'Damage:':15} {', '.join(combat.get('damage', []))}")
     lines.append(f"{'Save:':15} {primary.get('save', '-')}")
-    lines.append(f"{'Morale:':15} {primary.get('morale', '-')}")
+    lines.append(f"{'Morale:':15} {eff['morale']}")
     lines.append(f"{'Vision:':15} Lightless Vision (90')")
     lines.append(f"{'Other Senses:':15} {sense}")
     for label, text in coverage_stat_lines(resolved):

@@ -25,6 +25,13 @@ from Cacodemon_Generator import (
     RESISTANCE_COST,
     ability_details,
 )
+from Cacodemon_Generator import ALL_DAMAGE_TYPES as _ALL
+
+
+def test_incorporeal_folds_immunity_to_all_mundane_damage():
+    incorp = {"name": "Incorporeal", "detail": ["", 1, None]}
+    cov = _resolve_demon_coverage([incorp])
+    assert cov["immune_damage"] == {(t, "mundane") for t in _ALL}
 
 
 def both(*types):

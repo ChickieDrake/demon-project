@@ -319,6 +319,124 @@ def test_single_attack_forms_never_generate_hug():
             assert "Hug" not in [a["name"] for a in demon["abilities"]["abilities"]]
 
 
+# --- Abilities folded into the stat block ----------------------------------
+
+from Cacodemon_Generator import effective_stat_block, _scale_speed, _note_stat_folding
+
+
+def _ability(name, detail0="", structured=None):
+    return {"name": name, "roll": "x", "cost": 0, "book_cost": "",
+            "description": "", "detail": [detail0, 0, structured]}
+
+
+def _demon_with(abilities):
+    """Minimal demon dict for stat-folding tests (Man-Sized Humanoid, AC 4)."""
+    return {
+        "primary_stats": {"ac": 4, "morale": 0},
+        "combat_stats": {
+            "attack_routine": "3 (2 claws, 1 bite)",
+            "movement": {"land": "40'/120'", "fly": "80'/240'", "climb": None, "swim": None},
+        },
+        "attack": "7+",
+        "abilities": {"abilities": abilities},
+    }
+
+
+def test_tough_adds_its_rolled_ac_bonus():
+    demon = _demon_with([_ability("Tough", "AC Increased by 3", {"ac_bonus": 3})])
+    assert effective_stat_block(demon)["ac"] == 7            # 4 + 3
+
+
+def test_ac_unchanged_without_tough():
+    assert effective_stat_block(_demon_with([]))["ac"] == 4
+
+
+def test_berserk_improves_attack_throw_by_two_and_sets_morale():
+    eff = effective_stat_block(_demon_with([_ability("Berserk")]))
+    assert eff["attack"] == "5+"                              # 7+ improved by 2
+    assert eff["morale"] == 4
+
+
+def test_bonus_attack_appends_to_the_attacks_line():
+    one = _demon_with([_ability("Bonus Attack", "", {"bonus_attacks": 1, "damage": "primary"})])
+    assert effective_stat_block(one)["attacks_suffix"] == " +1 bonus attack (primary dmg)"
+    two = _demon_with([_ability("Bonus Attack", "", {"bonus_attacks": 2, "damage": "half"})])
+    assert effective_stat_block(two)["attacks_suffix"] == " +2 bonus attacks (half dmg)"
+
+
+def test_swift_scales_speeds_by_25_percent_rounded_to_nearest_five():
+    assert _scale_speed("40'/120'") == "50'/150'"
+    assert _scale_speed("10'/30'") == "15'/40'"
+    assert _scale_speed("40'/120' or 30'/90'") == "50'/150' or 40'/115'"
+    assert _scale_speed(None) is None
+
+
+def test_swift_present_scales_the_movement():
+    demon = _demon_with([_ability("Swift")])
+    assert effective_stat_block(demon)["movement"]["land"] == "50'/150'"
+
+
+def test_stat_fold_note_is_appended_only_to_folded_abilities():
+    abils = [
+        _ability("Tough", "AC Increased by 2", {"ac_bonus": 2}),
+        _ability("Berserk"),
+        _ability("Poison", "onset time: instant; effect: death"),   # not folded
+    ]
+    _note_stat_folding(abils)
+    tough = next(a for a in abils if a["name"] == "Tough")
+    berserk = next(a for a in abils if a["name"] == "Berserk")
+    poison = next(a for a in abils if a["name"] == "Poison")
+    assert tough["detail"][0].startswith("AC Increased by 2")
+    assert tough["detail"][0].endswith("reflected in the stat block")
+    assert "reflected in the stat block" in berserk["detail"][0]
+    assert "reflected in the stat block" not in poison["detail"][0]
+
+
+def test_stat_fold_note_covers_the_other_folded_abilities():
+    abils = [
+        _ability("Flying"),
+        _ability("Special Senses", "Acute Olfaction", {"sense": "Acute Olfaction"}),
+        _ability("Immunity", "Immune to all physical damage", {"kind": "immunity"}),
+        _ability("Resistance", "Roll 1: Resists all death effects", {"kind": "resistance"}),
+        _ability("Aura", "Fire"),   # not folded into the stat block
+    ]
+    _note_stat_folding(abils)
+    for nm in ("Flying", "Special Senses", "Immunity", "Resistance"):
+        detail = next(a for a in abils if a["name"] == nm)["detail"][0]
+        assert "reflected in the stat block" in detail.lower()
+    aura = next(a for a in abils if a["name"] == "Aura")["detail"][0]
+    assert "reflected in the stat block" not in aura.lower()
+
+
+def test_special_senses_line_is_not_polluted_by_the_note():
+    # The Other Senses line must show the sense only; the note lives in the
+    # ability's detail, read separately from structured data.
+    from Cacodemon_Generator import format_stats_block
+    for _ in range(3000):
+        demon = generate_cacodemon_base("Imp")
+        by = {a["name"]: a for a in demon["abilities"]["abilities"]}
+        if "Special Senses" not in by:
+            continue
+        other = next(l for l in format_stats_block(demon).splitlines()
+                     if l.startswith("Other Senses:"))
+        assert "reflected in the stat block" not in other
+        assert "reflected in the stat block" in by["Special Senses"]["detail"][0]
+        return
+    raise AssertionError("no Special Senses rolled in sample")
+
+
+def test_stat_block_ac_and_morale_match_effective_values():
+    # Wiring guard: the rendered stat block uses the folded values.
+    demon = generate_cacodemon_base("Imp")
+    eff = effective_stat_block(demon)
+    from Cacodemon_Generator import format_stats_block
+    lines = format_stats_block(demon).splitlines()
+    ac_line = next(l for l in lines if l.startswith("Armor Class:"))
+    morale_line = next(l for l in lines if l.startswith("Morale:"))
+    assert ac_line.split()[-1] == str(eff["ac"])
+    assert morale_line.split()[-1] == str(eff["morale"])
+
+
 def test_stats_block_has_hit_points_resistances_and_languages():
     from Cacodemon_Generator import format_stats_block
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")
