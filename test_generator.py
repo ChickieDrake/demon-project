@@ -144,8 +144,8 @@ def test_format_stats_block_has_stats_only():
     from Cacodemon_Generator import format_stats_block
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")
     block = format_stats_block(demon)
-    assert "Size:" in block
-    assert "Armor Class:" in block   # an always-present stat line
+    assert "AC " in block            # condensed core line
+    assert "MV " in block
     # It is ONLY the stats -- no abilities or spellcasting sections.
     assert "Special Abilities" not in block
     assert "Spellcasting" not in block
@@ -425,22 +425,36 @@ def test_special_senses_line_is_not_polluted_by_the_note():
     raise AssertionError("no Special Senses rolled in sample")
 
 
-# --- Structured stat rows + the abilities one-liner ------------------------
+# --- Condensed core line + secondary rows + the abilities one-liner --------
 
-def test_stat_block_rows_are_label_value_pairs_hiding_unused():
+def test_condensed_stats_use_bx_abbreviations():
+    from Cacodemon_Generator import condensed_stats
+    demon = _render_demon(
+        movement={"land": "20'/60'", "fly": "40'/120'", "climb": None, "swim": None},
+        abilities=[],
+        coverage=_coverage(base={("Fire", "mundane")}),
+    )
+    line = condensed_stats(demon)
+    # Classic B/X module abbreviations on one semicolon-separated line.
+    assert "AC 4" in line and "HD 4**" in line and "hp 17" in line
+    assert "MV 20'/60'" in line and "Save F4" in line and "ML 0" in line
+    # No fly (no Flying ability) or climb/swim (None) in the movement.
+    assert "fly" not in line and "climb" not in line and "swim" not in line
+
+
+def test_secondary_rows_always_have_senses_and_base_resistances():
     from Cacodemon_Generator import stat_block_rows
     demon = _render_demon(
         movement={"land": "20'/60'", "fly": "40'/120'", "climb": None, "swim": None},
-        abilities=[],                                  # no Flying, no Special Senses
+        abilities=[],                                  # no Special Senses
         coverage=_coverage(base={("Fire", "mundane")}),
     )
     rows = dict(stat_block_rows(demon))
-    assert rows["Size"] == "Man-Sized"
-    # All speeds share one row; only the present ones are listed.
-    assert rows["Speed"] == "land 20'/60'"
+    # Other Senses always present and led by Lightless Vision.
+    assert rows["Other Senses"] == "Lightless Vision (90')"
     assert "Base Resistances" in rows
-    for hidden in ("Speed (land)", "Speed (fly)", "Speed (climb)", "Speed (swim)",
-                   "Other Senses", "Immunities", "Additional Resistances"):
+    # Core stats moved to the condensed line; empty coverage hidden.
+    for hidden in ("Size", "Speed", "Armor Class", "Immunities", "Additional Resistances"):
         assert hidden not in rows
 
 
@@ -509,11 +523,10 @@ def test_stat_block_hides_unused_entries():
         coverage=_coverage(base={("Fire", "mundane")}),
     )
     block = format_stats_block(demon)
-    assert "Speed:" in block
-    assert "land" in block
+    assert "MV 20'/60'" in block
     assert "Base Resistances:" in block
     for hidden in ("fly", "climb", "swim",
-                   "Other Senses:", "Immunities:", "Additional Resistances:"):
+                   "Immunities:", "Additional Resistances:"):
         assert hidden not in block, hidden
 
 
@@ -528,34 +541,30 @@ def test_stat_block_shows_used_entries():
                            additional={("Arcane", "mundane")}),
     )
     block = format_stats_block(demon)
-    assert "Speed:" in block
-    assert "fly" in block                   # Flying present
-    assert "climb" in block                 # climb present
+    assert "fly 40'/120'" in block          # Flying present
+    assert "climb 20'/60'" in block         # climb present
     assert "swim" not in block              # swim None -> hidden
-    assert "Other Senses:" in block         # has a sense
+    assert "Acute Vision" in block          # sense appended to Other Senses
     assert "Immunities:" in block
     assert "Additional Resistances:" in block
 
 
-def test_stat_block_ac_and_morale_match_effective_values():
-    # Wiring guard: the rendered stat block uses the folded values.
+def test_condensed_line_carries_folded_ac_and_morale():
+    # Wiring guard: the condensed line uses the folded AC/Morale.
     demon = generate_cacodemon_base("Imp")
     eff = effective_stat_block(demon)
-    from Cacodemon_Generator import format_stats_block
-    lines = format_stats_block(demon).splitlines()
-    ac_line = next(l for l in lines if l.startswith("Armor Class:"))
-    morale_line = next(l for l in lines if l.startswith("Morale:"))
-    assert ac_line.split()[-1] == str(eff["ac"])
-    assert morale_line.split()[-1] == str(eff["morale"])
+    from Cacodemon_Generator import condensed_stats
+    line = condensed_stats(demon)
+    assert f"AC {eff['ac']}" in line
+    assert f"ML {eff['morale']}" in line
 
 
-def test_stats_block_has_hit_points_resistances_and_languages():
+def test_stats_block_has_hp_resistances_and_languages():
     from Cacodemon_Generator import format_stats_block
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")
     block = format_stats_block(demon)
     assert "Base Resistances:" in block
     lines = block.splitlines()
     assert any(l.startswith("Languages:") and l.endswith("None (but uses Telepathy)") for l in lines)
-    # Hit Points appears directly under Hit Dice.
-    hd_idx = next(i for i, line in enumerate(lines) if line.startswith("Hit Dice:"))
-    assert lines[hd_idx + 1].startswith("Hit Points:")
+    # HD and hp both live on the condensed first line.
+    assert "HD " in lines[0] and "hp " in lines[0]

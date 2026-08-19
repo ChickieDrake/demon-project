@@ -2,6 +2,7 @@ import streamlit as st
 
 from Cacodemon_Generator import (
     generate_cacodemon_base,
+    condensed_stats,
     stat_block_rows,
     abilities_oneliner,
     value_symbols,
@@ -26,8 +27,8 @@ st.markdown("""
   [data-testid="stToolbar"], [data-testid="stDecoration"],
   [data-testid="stStatusWidget"] { display: none !important; }
 
-  /* minimal top gap; right gutter keeps content clear of the corner buttons */
-  .block-container { padding: .8rem 3.6rem 3rem 1rem !important; max-width: 480px; }
+  /* minimal margins; content runs full width under the corner buttons */
+  .block-container { padding: .7rem 1rem 3rem 1rem !important; max-width: 480px; }
 
   /* corner buttons: spider on top, gear below, both top-right */
   .st-key-spiderbtn, .st-key-gearbtn { position: fixed; right: .5rem; z-index: 1000; width: auto; }
@@ -42,19 +43,17 @@ st.markdown("""
 
   /* imp card */
   .impname { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
-  .impform { opacity: .6; font-size: .9rem; margin-bottom: .5rem; }
-  .statgrid { display: grid; grid-template-columns: auto 1fr; column-gap: .7rem;
-              row-gap: 2px; font-size: .92rem; line-height: 1.3;
-              border-top: 1px solid rgba(128,128,128,.3); padding-top: .4rem; }
-  .statgrid .lbl { opacity: .55; white-space: nowrap; }
-  .abils { font-size: .92rem; line-height: 1.3; margin-top: .45rem; padding-top: .4rem;
-           border-top: 1px solid rgba(128,128,128,.3); }
-  .abils .lbl { opacity: .55; }
+  .impform { opacity: .6; font-size: .9rem; margin-bottom: .4rem; }
+  .statline { font-size: .95rem; line-height: 1.35; font-weight: 500;
+              border-top: 1px solid rgba(128,128,128,.3);
+              border-bottom: 1px solid rgba(128,128,128,.3);
+              padding: .4rem 0; margin-bottom: .4rem; }
+  .inforow { font-size: .9rem; line-height: 1.35; }
+  .inforow .lbl { opacity: .55; }
 
-  /* no-imp hint */
-  .noimp { margin-top: 1rem; opacity: .7; }
-  .noimp .arrow { font-size: 2.4rem; line-height: 1; }
-  .noimp .hint { font-size: 1.1rem; margin-top: .3rem; }
+  /* no-imp hint, tucked to the left of the spider */
+  .tapnote { position: fixed; top: 1.5rem; right: 5rem; z-index: 999; text-align: right;
+             opacity: .8; font-size: 1.05rem; line-height: 1.25; width: 60vw; max-width: 13rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,7 +77,7 @@ with st.container(key="gearbtn"):
             else:
                 signature_choice = st.slider("Chance to apply it (%)", 0, 100, 50) / 100
 
-# --- Generate (spider, top-left). ---
+# --- Generate (spider, top-left corner of the two stacked buttons). ---
 with st.container(key="spiderbtn"):
     if st.button("🕷️", help="Conjure a new imp"):
         st.session_state.demon = generate_cacodemon_base(
@@ -89,21 +88,22 @@ with st.container(key="spiderbtn"):
 demon = st.session_state.get("demon")
 if not demon:
     st.markdown(
-        '<div class="noimp"><div class="arrow">&#8598;</div>'
-        '<div class="hint">Tap the spider<br>to conjure an imp</div></div>',
+        '<div class="tapnote">Tap the spider to conjure an imp&nbsp;&#8594;</div>',
         unsafe_allow_html=True,
     )
 else:
     form, winged = demon["body_form"]
-    rows = "".join(
-        f'<span class="lbl">{label}</span><span class="val">{value}</span>'
+    size = demon.get("size: ", {}).get("category", "")
+    secondary = "".join(
+        f'<div class="inforow"><span class="lbl">{label}:</span> {value}</div>'
         for label, value in stat_block_rows(demon)
     )
     st.markdown(
         f'<div class="impname">{demon["name"]}</div>'
-        f'<div class="impform">Imp · {form}, {"Winged" if winged else "Non-Winged"}</div>'
-        f'<div class="statgrid">{rows}</div>'
-        f'<div class="abils"><span class="lbl">Abilities</span> {abilities_oneliner(demon)}</div>',
+        f'<div class="impform">Imp · {form}, {"Winged" if winged else "Non-Winged"} · {size}</div>'
+        f'<div class="statline">{condensed_stats(demon)}</div>'
+        f'{secondary}'
+        f'<div class="inforow"><span class="lbl">Abilities:</span> {abilities_oneliner(demon)}</div>',
         unsafe_allow_html=True,
     )
 

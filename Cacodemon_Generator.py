@@ -1273,58 +1273,71 @@ def _is_blank(value):
     return value is None or str(value).strip().lower() in ("", "-", "none")
 
 
-def stat_block_rows(cacodemon):
-    """The stat block as ordered (label, value) pairs, omitting unused ones: any
-    Speed that is blank, and Other Senses / Immunities / Additional Resistances
-    when empty. Ability effects (Tough, Berserk, Swift, ...) are already folded
-    in. This is the single source of truth for both the text and HTML renderers.
-    """
-    size_data = cacodemon.get('size: ', {})
-    combat = cacodemon.get('combat_stats', {})
-    primary = cacodemon.get('primary_stats', {})
-
-    eff = effective_stat_block(cacodemon)   # AC/attack/morale/speeds after folding
+def _movement_string(cacodemon):
+    """The movement modes as one compact string, old-D&D style: the land value
+    bare, other modes labelled -- e.g. "40'/120', fly 80'/240'". Fly only shows
+    with the Flying ability; climb/swim show when the form has them."""
+    eff = effective_stat_block(cacodemon)
     movement = eff['movement']
-    flySpeed = 'None'
-    has_flying = False
-    landSpeed = movement.get('land', '-')
-    sense = 'None'
+    has_flying = any(a['name'] == "Flying" for a in cacodemon['abilities']['abilities'])
 
-    for ab in cacodemon['abilities']['abilities']:
-        if ab['name'] == "Flying":
-            has_flying = True
-            flySpeed = movement.get('fly', '-')
-        if ab['name'] == "Special Senses":
-            # Read from structured data so the folding note on detail[0] does
-            # not leak into the Other Senses value.
-            sense = (ab['detail'][2] or {}).get('sense') or ab['detail'][0]
+    land = movement.get('land', '-')
+    if 'or' in str(land):
+        opts = land.split('or')
+        land = opts[1].strip() if has_flying else opts[0].strip()
 
-    if 'or' in str(landSpeed):
-        options = landSpeed.split('or')
-        landSpeed = options[1].strip() if has_flying else options[0].strip()
+    modes = []
+    if not _is_blank(land):
+        modes.append(land)
+    if has_flying and not _is_blank(movement.get('fly')):
+        modes.append(f"fly {movement.get('fly')}")
+    if not _is_blank(movement.get('climb')):
+        modes.append(f"climb {movement.get('climb')}")
+    if not _is_blank(movement.get('swim')):
+        modes.append(f"swim {movement.get('swim')}")
+    return ", ".join(modes) if modes else "-"
 
+
+def condensed_stats(cacodemon):
+    """The core combat stats as one condensed line in the classic B/X module
+    style: "AC 4; HD 4**; hp 20; MV 40'/120'; #AT 1 (bite), 5+; Dmg 2d8;
+    Save F4; ML 0". Ability effects (Tough, Berserk, Swift, ...) are folded in.
+    """
+    primary = cacodemon.get('primary_stats', {})
+    combat = cacodemon.get('combat_stats', {})
+    eff = effective_stat_block(cacodemon)
+    return "; ".join([
+        f"AC {eff['ac']}",
+        f"HD {primary.get('hd', '-')}",
+        f"hp {cacodemon.get('hit_points', '-')}",
+        f"MV {_movement_string(cacodemon)}",
+        f"#AT {combat.get('attack_routine', '-')}{eff['attacks_suffix']}, {eff['attack']}",
+        f"Dmg {', '.join(combat.get('damage', []))}",
+        f"Save {primary.get('save', '-')}",
+        f"ML {eff['morale']}",
+    ])
+
+
+def stat_block_rows(cacodemon):
+    """The secondary stat lines shown under the condensed core, as (label, value)
+    pairs: Other Senses (always -- Lightless Vision plus any special sense), the
+    coverage lines (Immunities/Additional Resistances only when present), and
+    Languages."""
     resolved = cacodemon.get("coverage") or _resolve_demon_coverage(
         cacodemon['abilities']['abilities']
     )
 
-    rows = [("Size", size_data.get('category', 'Unknown'))]
-    # All movement modes share one compact row, e.g. "land 20'/60', fly 40'/120'".
-    speeds = [f"{kind} {value}" for kind, value in
-              (("land", landSpeed), ("fly", flySpeed),
-               ("climb", movement.get('climb')), ("swim", movement.get('swim')))
-              if not _is_blank(value)]
-    if speeds:
-        rows.append(("Speed", ", ".join(speeds)))
-    rows.append(("Armor Class", eff['ac']))
-    rows.append(("Hit Dice", primary.get('hd', '-')))
-    rows.append(("Hit Points", cacodemon.get('hit_points', '-')))
-    rows.append(("Attacks", f"{combat.get('attack_routine', '-')}{eff['attacks_suffix']}, {eff['attack']}"))
-    rows.append(("Damage", ', '.join(combat.get('damage', []))))
-    rows.append(("Save", primary.get('save', '-')))
-    rows.append(("Morale", eff['morale']))
-    rows.append(("Vision", "Lightless Vision (90')"))
+    sense = None
+    for ab in cacodemon['abilities']['abilities']:
+        if ab['name'] == "Special Senses":
+            # Read from structured data so the folding note on detail[0] does
+            # not leak into the value.
+            sense = (ab['detail'][2] or {}).get('sense') or ab['detail'][0]
+    other_senses = "Lightless Vision (90')"
     if not _is_blank(sense):
-        rows.append(("Other Senses", sense))
+        other_senses += f", {sense}"
+
+    rows = [("Other Senses", other_senses)]
     for label, text in coverage_stat_lines(resolved):
         # Base Resistances always shows; Immunities/Additional only when present.
         if label == "Base Resistances" or not _is_blank(text):
@@ -1334,8 +1347,10 @@ def stat_block_rows(cacodemon):
 
 
 def format_stats_block(cacodemon):
-    """Render the stat block as plain aligned text."""
-    return "\n".join(f"{label + ':':24} {value}" for label, value in stat_block_rows(cacodemon))
+    """Full stat block as text: the condensed core line, then the secondary rows."""
+    lines = [condensed_stats(cacodemon)]
+    lines += [f"{label}: {value}" for label, value in stat_block_rows(cacodemon)]
+    return "\n".join(lines)
 
 
 
