@@ -10,6 +10,8 @@ import random
 import pandas as pd
 import re
 
+from collections import Counter
+
 from imp_names import IMP_NAMES
 
 
@@ -339,11 +341,256 @@ def value_symbols(cost):
     return "*" * (eighths // 8) + "#" * (eighths % 8)
 
 
+# --- Immunity / Resistance coverage model ----------------------------------
+#
+# Damage sits on two independent axes:
+#   * Nature -- Physical vs Energy. This is the game's own (non-intuitive)
+#     grouping of the twelve types; Acidic, Arcane and Poisonous are *physical*.
+#   * Source -- mundane (the default) or extraordinary (a tag any type can
+#     carry). "Extraordinary fire" and "mundane fire" are both possible.
+#
+# Coverage is tracked as a set of (type, source) "atoms" so that overlapping
+# clauses can be intersected exactly -- which is what turns doubled resistance
+# into immunity.
+PHYSICAL_TYPES = ["Acidic", "Arcane", "Bludgeoning", "Piercing", "Poisonous", "Slashing"]
+ENERGY_TYPES = ["Cold", "Electrical", "Fire", "Luminous", "Necrotic", "Seismic"]
+ALL_DAMAGE_TYPES = PHYSICAL_TYPES + ENERGY_TYPES
+INNATE_RESISTANCES = ["Acidic", "Cold", "Electrical", "Fire", "Poisonous", "Seismic"]
+SOURCES = ("mundane", "extraordinary")
+
+# Effect-only clauses (no damage type); the token stored for each.
+EFFECT_SELECTORS = {9: "enchantment", 10: "death", 11: "transmogrification"}
+
+
+def clause_atoms(clause):
+    """Expand a rolled Immunity/Resistance clause into the coverage it grants.
+
+    A clause is ``{"selector": 1..11, "picks": [types] | None}`` where the
+    selector matches the book's 1d12 table (the "12 -> roll twice" case is
+    handled by rolling two clauses, so only 1..11 appear here). Returns
+    ``(damage_atoms, effect_tokens)`` -- a set of ``(type, source)`` pairs and a
+    set of effect-name strings.
+    """
+    selector = clause["selector"]
+    picks = clause.get("picks")
+
+    if selector == 1:                                   # all mundane damage
+        return ({(t, "mundane") for t in ALL_DAMAGE_TYPES}, set())
+    if selector == 2:                                   # all extraordinary damage
+        return ({(t, "extraordinary") for t in ALL_DAMAGE_TYPES}, set())
+    if selector == 3:                                   # all physical damage
+        return ({(t, s) for t in PHYSICAL_TYPES for s in SOURCES}, set())
+    if selector == 4:                                   # all energy damage
+        return ({(t, s) for t in ENERGY_TYPES for s in SOURCES}, set())
+    if selector in (5, 6):                              # any N damage types
+        return ({(t, s) for t in picks for s in SOURCES}, set())
+    if selector == 7:                                   # all mundane physical
+        return ({(t, "mundane") for t in PHYSICAL_TYPES}, set())
+    if selector == 8:                                   # any 3 mundane types
+        return ({(t, "mundane") for t in picks}, set())
+    if selector in EFFECT_SELECTORS:                    # enchantment/death/transmog
+        return (set(), {EFFECT_SELECTORS[selector]})
+    raise ValueError(f"Unknown clause selector: {selector}")
+
+
+def resolve_coverage(immunity_clauses, resistance_clauses, innate=None):
+    """Resolve every Immunity/Resistance clause into the imp's final coverage.
+
+      * The Immunity ability's atoms are immunity outright.
+      * Resistance stacks: any atom held by two or more resistance sources --
+        the innate base counting as one source -- upgrades to immunity.
+      * Immunity always supersedes resistance.
+
+    Returns a dict with ``immune_damage`` / ``immune_effects`` and the surviving
+    resistances split into ``base_resist`` (innate-derived) and
+    ``additional_resist_damage`` / ``additional_resist_effects`` (from the
+    Resistance ability).
+    """
+    innate = INNATE_RESISTANCES if innate is None else innate
+    innate_atoms = {(t, s) for t in innate for s in SOURCES}
+
+    # Immunity-ability coverage.
+    imm_dmg, imm_eff = set(), set()
+    for clause in immunity_clauses:
+        d, e = clause_atoms(clause)
+        imm_dmg |= d
+        imm_eff |= e
+
+    # Doubling counts only the ROLLED resistance clauses. The innate base is NOT
+    # a stacking source: rolling a type you already resist innately is wasted,
+    # and only two *rolls* of the same atom upgrade it to immunity.
+    rolled_dmg = [clause_atoms(c)[0] for c in resistance_clauses]
+    rolled_eff = [clause_atoms(c)[1] for c in resistance_clauses]
+    dmg_counts = Counter(atom for src in rolled_dmg for atom in src)
+    eff_counts = Counter(tok for src in rolled_eff for tok in src)
+    doubled_dmg = {atom for atom, n in dmg_counts.items() if n >= 2}
+    doubled_eff = {tok for tok, n in eff_counts.items() if n >= 2}
+
+    immune_damage = imm_dmg | doubled_dmg
+    immune_effects = imm_eff | doubled_eff
+
+    rolled_resist_damage = set(dmg_counts) - immune_damage
+    rolled_resist_effects = set(eff_counts) - immune_effects
+
+    return {
+        "immune_damage": immune_damage,
+        "immune_effects": immune_effects,
+        # Innate stays resistance unless the immunity ability or a doubled roll
+        # covered it. Additional drops anything already innate (that's the
+        # wasted "tough luck" roll).
+        "base_resist": innate_atoms - immune_damage,
+        "additional_resist_damage": rolled_resist_damage - innate_atoms,
+        "additional_resist_effects": rolled_resist_effects,
+    }
+
+
+def describe_coverage(damage_atoms, effect_tokens):
+    """Render a coverage atom set as readable stat-block text.
+
+    Types covered in both sources print bare ("Fire"); a single source is
+    prefixed ("mundane Fire"). Whole categories collapse to their name
+    ("all physical damage"), and a scope that is all-but-one-or-two types
+    collapses to "all ... damage except X, Y". Returns "None" when empty.
+    """
+    by_type = {}
+    for (t, s) in damage_atoms:
+        by_type.setdefault(t, set()).add(s)
+
+    full = {t for t, srcs in by_type.items() if srcs == {"mundane", "extraordinary"}}
+    mundane_only = {t for t, srcs in by_type.items() if srcs == {"mundane"}}
+    extra_only = {t for t, srcs in by_type.items() if srcs == {"extraordinary"}}
+
+    def order_list(types):
+        return ", ".join(sorted(types))     # alphabetical, for stable display
+
+    def phrase(types, source_word):
+        prefix = (source_word + " ") if source_word else ""
+        allset = set(ALL_DAMAGE_TYPES)
+        if types == allset:
+            return f"all {prefix}damage"
+        missing = allset - types
+        if len(missing) <= 2:
+            return f"all {prefix}damage except {order_list(missing)}"
+        if types == set(PHYSICAL_TYPES):
+            return f"all {prefix}physical damage"
+        if types == set(ENERGY_TYPES):
+            return f"all {prefix}energy damage"
+        return f"{prefix}{order_list(types)}"
+
+    parts = []
+    if full:
+        parts.append(phrase(full, ""))
+    if mundane_only:
+        parts.append(phrase(mundane_only, "mundane"))
+    if extra_only:
+        parts.append(phrase(extra_only, "extraordinary"))
+    for tok in ("enchantment", "death", "transmogrification"):
+        if tok in effect_tokens:
+            parts.append(f"all {tok} effects")
+
+    return "; ".join(parts) if parts else "None"
+
+
+def describe_ability_rolls(structured):
+    """Render an Immunity/Resistance ability's raw rolls for the ability block,
+    so a reader can see how the stat-block roll-up was reached. Immunity has one
+    roll; Resistance's two rolls are labelled "Roll 1"/"Roll 2"."""
+    verb = "Immune to" if structured["kind"] == "immunity" else "Resists"
+    clauses = structured["clauses"]
+    parts = []
+    for i, clause in enumerate(clauses, 1):
+        prefix = f"Roll {i}: " if len(clauses) > 1 else ""
+        parts.append(f"{prefix}{verb} {describe_coverage(*clause_atoms(clause))}")
+    return "; ".join(parts)
+
+
+# Per-selector costs (in special-ability units) for the two abilities. These
+# match the book's symbols and the previous inline ladders exactly.
+IMMUNITY_COST = {1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: .5, 7: .5, 8: .25, 9: .5, 10: .5, 11: .5}
+RESISTANCE_COST = {1: .5, 2: .5, 3: .5, 4: .5, 5: .5, 6: .25, 7: .25, 8: .125, 9: .25, 10: .25, 11: .25}
+
+# How many damage types each picking selector samples.
+_PICK_COUNT = {5: 6, 6: 3, 8: 3}
+
+
+def _roll_clause():
+    """Roll one Immunity/Resistance clause: a 1d11 selector plus, for the
+    type-picking selectors, the sampled types. Picks are drawn from all twelve
+    types -- the old innate-type exclusion is gone, because a roll landing on an
+    innate type now stacks to immunity rather than being wasted."""
+    selector = random.randint(1, 11)
+    count = _PICK_COUNT.get(selector)
+    picks = random.sample(ALL_DAMAGE_TYPES, count) if count else None
+    return {"selector": selector, "picks": picks}
+
+
+def _reroll_if_redundant(clause, immune_atoms, immune_effects, attempts=50):
+    """The book's "re-roll if already immune": if a resistance clause is wholly
+    covered by the Immunity ability it grants nothing, so replace it with
+    another clause of the SAME cost tier that adds something. Cost is preserved
+    so the ability's budgeted total does not shift. Gives up (keeps the clause)
+    if no better same-cost clause turns up."""
+    def redundant(c):
+        d, e = clause_atoms(c)
+        return d <= immune_atoms and e <= immune_effects
+
+    if not redundant(clause):
+        return clause
+    tier = RESISTANCE_COST[clause["selector"]]
+    for _ in range(attempts):
+        candidate = _roll_clause()
+        if RESISTANCE_COST[candidate["selector"]] == tier and not redundant(candidate):
+            return candidate
+    return clause
+
+
+def _resolve_demon_coverage(abilities):
+    """Resolve the Immunity/Resistance abilities in a selected-abilities list
+    into the imp's net coverage. Applies the immunity re-roll guard first (only
+    meaningful when the imp has both abilities), then folds everything -- innate
+    base included -- through resolve_coverage."""
+    imm = next((a for a in abilities if a["name"] == "Immunity"), None)
+    res = next((a for a in abilities if a["name"] == "Resistance"), None)
+
+    immunity_clauses = imm["detail"][2]["clauses"] if imm else []
+    resistance_clauses = res["detail"][2]["clauses"] if res else []
+
+    if imm and res:
+        immune_atoms, immune_effects = set(), set()
+        for c in immunity_clauses:
+            d, e = clause_atoms(c)
+            immune_atoms |= d
+            immune_effects |= e
+        resistance_clauses = [
+            _reroll_if_redundant(c, immune_atoms, immune_effects)
+            for c in resistance_clauses
+        ]
+        res["detail"][2]["clauses"] = resistance_clauses
+        # Keep the raw ability text in sync with the (possibly re-rolled) clauses.
+        res["detail"][0] = describe_ability_rolls(res["detail"][2])
+
+    return resolve_coverage(immunity_clauses, resistance_clauses)
+
+
+def coverage_stat_lines(resolved):
+    """The three ordered (label, text) coverage lines for the stat block."""
+    return [
+        ("Immunities",
+         describe_coverage(resolved["immune_damage"], resolved["immune_effects"])),
+        ("Base Resistances",
+         describe_coverage(resolved["base_resist"], set())),
+        ("Additional Resistances",
+         describe_coverage(resolved["additional_resist_damage"],
+                           resolved["additional_resist_effects"])),
+    ]
+
+
 # Additional info:
 def ability_details(name, rank):
     info = ""
     cost = -1
-    
+    structured = None       # Immunity/Resistance stash their rolled clauses here
+
     aura_damage_types = [
         "Arcane",
         "Acidic",
@@ -369,21 +616,6 @@ def ability_details(name, rank):
         "Martial Talent (JJ321)",
         "Scaly Hide (JJ324)",
         "Inexorable (JJ325)"
-    ]
-    
-    damage_types = [
-        "Acidic",
-        "Arcane",
-        "Bludgeoning",
-        "Cold",
-        "Electrical",
-        "Fire",
-        "Luminous",
-        "Necrotic",
-        "Piercing",
-        "Poisonous",
-        "Seismic",
-        "Slashing"
     ]
     
     if name == 'Aura':
@@ -427,42 +659,14 @@ def ability_details(name, rank):
         cost = 1
         
     elif name == "Immunity":
-        selector = random.randint(1, 11)
-        if selector == 1:
-            info = "Immune to all Mundane Damage"
-            cost = 1
-        elif selector == 2:
-            info = "Immune to all Extraordinary Damage"
-            cost = 1
-        elif selector == 3:
-            info = "Immune to all Physical Damage"
-            cost = 1
-        elif selector == 4:
-            info = "Immune to all Energy Damage"
-            cost = 1
-        elif selector == 5:
-            info = "Immune to: " + str(random.sample(damage_types, 6))
-            cost = 1
-        elif selector == 6:
-            info = "Immune to: " + str(random.sample(damage_types, 3))
-            cost = .5
-        elif selector == 7:
-            info = "Immune to Mundane Physical Damage"
-            cost = .5
-        elif selector == 8:
-            info = "Immune to Mundane " + str(random.sample(damage_types, 3)) + " damage"
-            cost = .25
-        elif selector == 9:
-            info = "Immune to all Enchantment effects"
-            cost = .5
-        elif selector == 10:
-            info = "Immune to all Death effects"
-            cost = .5
-        elif selector == 11:
-            info = "Immune to all Transmogrification effects"
-            cost = .5
-            
-        
+        # Roll one clause. The raw roll is shown in the ability block (info); the
+        # resolved net coverage is rolled up into the stat block separately.
+        clause = _roll_clause()
+        cost = IMMUNITY_COST[clause["selector"]]
+        structured = {"kind": "immunity", "clauses": [clause]}
+        info = describe_ability_rolls(structured)
+
+
     elif name == "Paralysis":
         selector = random.randint(1, 6)
         if selector <= 2:
@@ -508,83 +712,15 @@ def ability_details(name, rank):
         cost = 1
         
     elif name == "Resistance":
-        # Imps are already naturally resistant to acidic, cold, electrical,
-        # fire, poisonous, and seismic damage, so exclude those when rolling
-        # specific damage types (re-roll them out) -- resisting them again is
-        # redundant.
-        natural_resistances = {"Acidic", "Cold", "Electrical", "Fire", "Poisonous", "Seismic"}
-        resist_types = [t for t in damage_types if t not in natural_resistances]
-        cost = 0
-        selector = random.randint(1, 11)
-        if selector == 1:
-            info = "Resists all Mundane Damage"
-            cost += .5
-        elif selector == 2:
-            info = "Resists all Extraordinary Damage"
-            cost += .5
-        elif selector == 3:
-            info = "Resists all Physical Damage"
-            cost += .5
-        elif selector == 4:
-            info = "Resists all Energy Damage"
-            cost += .5
-        elif selector == 5:
-            info = "Resists: " + str(random.sample(resist_types, 6))
-            cost += .5
-        elif selector == 6:
-            info = "Resists: " + str(random.sample(resist_types, 3))
-            cost += .25
-        elif selector == 7:
-            info = "Resists Mundane Physical Damage"
-            cost += .25
-        elif selector == 8:
-            info = "Resists Mundane " + str(random.sample(resist_types, 3)) + " damage"
-            cost += .125
-        elif selector == 9:
-            info = "Resists all Enchantment effects"
-            cost += .25
-        elif selector == 10:
-            info = "Resists all Death effects"
-            cost += .25
-        elif selector == 11:
-            info = "Resists all Transmogrification effects"
-            cost += .25
-            
-        selector = random.randint(1, 11)
-        if selector == 1:
-            info += "; Resists all Mundane Damage"
-            cost += .5
-        elif selector == 2:
-            info += "; Resists all Extraordinary Damage"
-            cost += .5
-        elif selector == 3:
-            info += "; Resists all Physical Damage"
-            cost += .5
-        elif selector == 4:
-            info += "; Resists all Energy Damage"
-            cost += .5
-        elif selector == 5:
-            info += "; Resists: " + str(random.sample(resist_types, 6))
-            cost += .5
-        elif selector == 6:
-            info += "; Resists: " + str(random.sample(resist_types, 3))
-            cost += .25
-        elif selector == 7:
-            info += "; Resists Mundane Physical Damage"
-            cost += .25
-        elif selector == 8:
-            info += "; Resists Mundane " + str(random.sample(resist_types, 3)) + " damage"
-            cost += .125
-        elif selector == 9:
-            info += "; Resists all Enchantment effects"
-            cost += .25
-        elif selector == 10:
-            info += "; Resists all Death effects"
-            cost += .25
-        elif selector == 11:
-            info += "; Resists all Transmogrification effects"
-            cost += .25
-            
+        # Roll twice. Overlaps between the two rolls stack up to immunity during
+        # resolution (innate does not stack). The raw rolls show in the ability
+        # block; the resolved net lands in the stat block's rolled-up lines.
+        clauses = [_roll_clause(), _roll_clause()]
+        cost = sum(RESISTANCE_COST[c["selector"]] for c in clauses)
+        structured = {"kind": "resistance", "clauses": clauses}
+        info = describe_ability_rolls(structured)
+
+
     elif name == 'Special Senses':
         sense_options = [
             ["Acute Hearing", .125],
@@ -608,7 +744,7 @@ def ability_details(name, rank):
         info = sla_detail[0]
         cost = sla_detail[1]
 
-    return [info, cost]
+    return [info, cost, structured]
 
 def should_reroll_ability(name, can_speak, size_category):
     # Add game-specific logic here
@@ -860,13 +996,17 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
     hit_points = sum(random.randint(1, 8) for _ in range(hd_num))  # hd_num d8 (4d8 for an Imp)
     
     abilities = roll_abilities_with_cost_limit(traits["special_abilities"], can_speak, size["category"], body_form, has_wings, rank, signature_choice)
-    
+
     for ab in abilities["abilities"]:
         if ab['name'] == "Spellcasting":
             can_speak = True
-    
+
     spellcasting = generate_spellcasting(rank, can_speak)
-    
+
+    # Fold the Immunity/Resistance abilities (and the innate base) into the net
+    # coverage shown on the stat block.
+    coverage = _resolve_demon_coverage(abilities["abilities"])
+
     return {
         "name": assign_imp_name(),
         "rank": rank,
@@ -879,6 +1019,7 @@ def generate_cacodemon_base(rank, body_form_roll = None, body_form = None, signa
         "hit_points": hit_points,
         "spells": spellcasting,
         "abilities": abilities,
+        "coverage": coverage,
         "size: ": size
     }
 
@@ -950,10 +1091,14 @@ def print_cacodemon_statblock(cacodemon):
     print("-" * 50)
     
     
-    print("\nBase Resistances:")
-    print(f"{'-' * 17}")
-    print("Resists acidic, cold, electrical, fire, poisonous, and seismic damage")
-    
+    resolved = cacodemon.get("coverage") or _resolve_demon_coverage(
+        cacodemon['abilities']['abilities']
+    )
+    print("\nResistances & Immunities:")
+    print(f"{'-' * 25}")
+    for label, text in coverage_stat_lines(resolved):
+        print(f"{label}: {text}")
+
     print("\nTelepathy")
     print(f"{'-' * 9}")
     print("Can communicate telepathically with any creatures they encounter")
@@ -1023,7 +1168,9 @@ def format_stats_block(cacodemon):
         landSpeed = options[1].strip() if has_flying else options[0].strip()
 
     hp = cacodemon.get('hit_points', '-')
-    resistances = "Resists acidic, cold, electrical, fire, poisonous, and seismic damage"
+    resolved = cacodemon.get("coverage") or _resolve_demon_coverage(
+        cacodemon['abilities']['abilities']
+    )
 
     lines.append(f"{'Size:':15} {size_data.get('category', 'Unknown')}")
     lines.append(f"{'Speed (land):':15} {landSpeed}")
@@ -1039,8 +1186,9 @@ def format_stats_block(cacodemon):
     lines.append(f"{'Morale:':15} {primary.get('morale', '-')}")
     lines.append(f"{'Vision:':15} Lightless Vision (90')")
     lines.append(f"{'Other Senses:':15} {sense}")
-    lines.append(f"{'Base Resistances:':15} {resistances}")
-    lines.append(f"{'Languages:':15} None (but uses Telepathy)")
+    for label, text in coverage_stat_lines(resolved):
+        lines.append(f"{label + ':':24} {text}")
+    lines.append(f"{'Languages:':24} None (but uses Telepathy)")
 
     return "\n".join(lines)
 
