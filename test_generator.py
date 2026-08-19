@@ -436,9 +436,10 @@ def test_stat_block_rows_are_label_value_pairs_hiding_unused():
     )
     rows = dict(stat_block_rows(demon))
     assert rows["Size"] == "Man-Sized"
-    assert rows["Speed (land)"] == "20'/60'"
+    # All speeds share one row; only the present ones are listed.
+    assert rows["Speed"] == "land 20'/60'"
     assert "Base Resistances" in rows
-    for hidden in ("Speed (fly)", "Speed (climb)", "Speed (swim)",
+    for hidden in ("Speed (land)", "Speed (fly)", "Speed (climb)", "Speed (swim)",
                    "Other Senses", "Immunities", "Additional Resistances"):
         assert hidden not in rows
 
@@ -508,9 +509,10 @@ def test_stat_block_hides_unused_entries():
         coverage=_coverage(base={("Fire", "mundane")}),
     )
     block = format_stats_block(demon)
-    assert "Speed (land):" in block
+    assert "Speed:" in block
+    assert "land" in block
     assert "Base Resistances:" in block
-    for hidden in ("Speed (fly):", "Speed (climb):", "Speed (swim):",
+    for hidden in ("fly", "climb", "swim",
                    "Other Senses:", "Immunities:", "Additional Resistances:"):
         assert hidden not in block, hidden
 
@@ -526,9 +528,10 @@ def test_stat_block_shows_used_entries():
                            additional={("Arcane", "mundane")}),
     )
     block = format_stats_block(demon)
-    assert "Speed (fly):" in block          # Flying present
-    assert "Speed (climb):" in block        # climb present
-    assert "Speed (swim):" not in block     # swim None -> hidden
+    assert "Speed:" in block
+    assert "fly" in block                   # Flying present
+    assert "climb" in block                 # climb present
+    assert "swim" not in block              # swim None -> hidden
     assert "Other Senses:" in block         # has a sense
     assert "Immunities:" in block
     assert "Additional Resistances:" in block

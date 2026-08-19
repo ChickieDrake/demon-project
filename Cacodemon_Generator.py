@@ -1308,11 +1308,13 @@ def stat_block_rows(cacodemon):
     )
 
     rows = [("Size", size_data.get('category', 'Unknown'))]
-    for label, value in (("Speed (land)", landSpeed), ("Speed (fly)", flySpeed),
-                         ("Speed (climb)", movement.get('climb')),
-                         ("Speed (swim)", movement.get('swim'))):
-        if not _is_blank(value):
-            rows.append((label, value))
+    # All movement modes share one compact row, e.g. "land 20'/60', fly 40'/120'".
+    speeds = [f"{kind} {value}" for kind, value in
+              (("land", landSpeed), ("fly", flySpeed),
+               ("climb", movement.get('climb')), ("swim", movement.get('swim')))
+              if not _is_blank(value)]
+    if speeds:
+        rows.append(("Speed", ", ".join(speeds)))
     rows.append(("Armor Class", eff['ac']))
     rows.append(("Hit Dice", primary.get('hd', '-')))
     rows.append(("Hit Points", cacodemon.get('hit_points', '-')))

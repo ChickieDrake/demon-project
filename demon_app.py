@@ -26,14 +26,18 @@ st.markdown("""
   [data-testid="stToolbar"], [data-testid="stDecoration"],
   [data-testid="stStatusWidget"] { display: none !important; }
 
-  .block-container { padding: 3.5rem 1rem 4rem 1rem !important; max-width: 480px; }
+  /* minimal top gap; right gutter keeps content clear of the corner buttons */
+  .block-container { padding: .8rem 3.6rem 3rem 1rem !important; max-width: 480px; }
 
-  /* corner buttons */
-  .st-key-spiderbtn, .st-key-gearbtn { position: fixed; top: .5rem; z-index: 1000; width: auto; }
-  .st-key-spiderbtn { left: .5rem; }
-  .st-key-gearbtn   { right: .5rem; }
-  .st-key-spiderbtn button, .st-key-gearbtn [data-testid="stPopover"] > button {
-      border-radius: 50%; width: 3rem; height: 3rem; padding: 0; font-size: 1.4rem;
+  /* corner buttons: spider on top, gear below, both top-right */
+  .st-key-spiderbtn, .st-key-gearbtn { position: fixed; right: .5rem; z-index: 1000; width: auto; }
+  .st-key-spiderbtn { top: .5rem; }
+  .st-key-gearbtn   { top: 5.2rem; }
+  .st-key-spiderbtn button {
+      border-radius: 50%; width: 4rem; height: 4rem; padding: 0; font-size: 2.2rem;
+      line-height: 1; }
+  .st-key-gearbtn [data-testid="stPopover"] > button {
+      border-radius: 50%; width: 2.7rem; height: 2.7rem; padding: 0; font-size: 1.1rem;
       line-height: 1; }
 
   /* imp card */
@@ -43,6 +47,9 @@ st.markdown("""
               row-gap: 2px; font-size: .92rem; line-height: 1.3;
               border-top: 1px solid rgba(128,128,128,.3); padding-top: .4rem; }
   .statgrid .lbl { opacity: .55; white-space: nowrap; }
+  .abils { font-size: .92rem; line-height: 1.3; margin-top: .45rem; padding-top: .4rem;
+           border-top: 1px solid rgba(128,128,128,.3); }
+  .abils .lbl { opacity: .55; }
 
   /* no-imp hint */
   .noimp { margin-top: 1rem; opacity: .7; }
@@ -95,11 +102,12 @@ else:
     st.markdown(
         f'<div class="impname">{demon["name"]}</div>'
         f'<div class="impform">Imp · {form}, {"Winged" if winged else "Non-Winged"}</div>'
-        f'<div class="statgrid">{rows}</div>',
+        f'<div class="statgrid">{rows}</div>'
+        f'<div class="abils"><span class="lbl">Abilities</span> {abilities_oneliner(demon)}</div>',
         unsafe_allow_html=True,
     )
 
-    with st.expander(f"Abilities: {abilities_oneliner(demon)}"):
+    with st.expander("Abilities detail"):
         st.caption(f"Total: {value_symbols(demon['abilities']['total_cost'])}")
         for ab in demon["abilities"]["abilities"]:
             st.markdown(f"**{ab['name']}** · {value_symbols(ab['cost'])}")
