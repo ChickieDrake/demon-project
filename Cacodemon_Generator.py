@@ -1243,8 +1243,15 @@ def print_cacodemon_statblock(cacodemon):
         print("Unrecognized spell format.")
 
 
+def _is_blank(value):
+    """True for stat values that are effectively empty, so their line can be
+    hidden (None, '-', or a 'none'/empty string)."""
+    return value is None or str(value).strip().lower() in ("", "-", "none")
+
+
 def format_stats_block(cacodemon):
-    """Return just the Size -> Other Senses stat lines as text.
+    """Return the stat lines as text, omitting unused ones: any Speed that is
+    None, and Other Senses / Immunities / Additional Resistances when empty.
 
     Land speed depends on whether the demon can fly, and Other Senses come from
     the Special Senses ability if present.
@@ -1282,10 +1289,11 @@ def format_stats_block(cacodemon):
     )
 
     lines.append(f"{'Size:':15} {size_data.get('category', 'Unknown')}")
-    lines.append(f"{'Speed (land):':15} {landSpeed}")
-    lines.append(f"{'Speed (fly):':15} {flySpeed}")
-    lines.append(f"{'Speed (climb):':15} {movement.get('climb', '-')}")
-    lines.append(f"{'Speed (swim):':15} {movement.get('swim', '-')}")
+    for label, value in (("Speed (land):", landSpeed), ("Speed (fly):", flySpeed),
+                         ("Speed (climb):", movement.get('climb')),
+                         ("Speed (swim):", movement.get('swim'))):
+        if not _is_blank(value):
+            lines.append(f"{label:15} {value}")
     lines.append(f"{'Armor Class:':15} {myAC}")
     lines.append(f"{'Hit Dice:':15} {primary.get('hd', '-')}")
     lines.append(f"{'Hit Points:':15} {hp}")
@@ -1294,9 +1302,12 @@ def format_stats_block(cacodemon):
     lines.append(f"{'Save:':15} {primary.get('save', '-')}")
     lines.append(f"{'Morale:':15} {eff['morale']}")
     lines.append(f"{'Vision:':15} Lightless Vision (90')")
-    lines.append(f"{'Other Senses:':15} {sense}")
+    if not _is_blank(sense):
+        lines.append(f"{'Other Senses:':15} {sense}")
     for label, text in coverage_stat_lines(resolved):
-        lines.append(f"{label + ':':24} {text}")
+        # Base Resistances always shows; Immunities/Additional only when present.
+        if label == "Base Resistances" or not _is_blank(text):
+            lines.append(f"{label + ':':24} {text}")
     lines.append(f"{'Languages:':24} None (but uses Telepathy)")
 
     return "\n".join(lines)

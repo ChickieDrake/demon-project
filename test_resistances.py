@@ -348,8 +348,21 @@ def test_generated_demon_carries_resolved_coverage():
         assert key in cov
 
 
-def test_stat_block_shows_the_three_coverage_lines_in_order():
-    demon = generate_cacodemon_base("Imp", body_form="Arachnine")
+def test_stat_block_lists_present_coverage_lines_in_order():
+    # When all three are populated they appear in order. (Empty ones are hidden;
+    # that behaviour is covered in test_generator.py.)
+    demon = {
+        "size: ": {"category": "Man-Sized"},
+        "combat_stats": {"attack_routine": "1 (bite)", "movement": {"land": "20'/60'"}, "damage": ["2d8"]},
+        "primary_stats": {"ac": 4, "hd": "4**", "save": "F4", "morale": 0},
+        "attack": "7+", "hit_points": 17,
+        "abilities": {"abilities": []},
+        "coverage": {
+            "immune_damage": both("Fire"), "immune_effects": set(),
+            "base_resist": both("Cold"), "additional_resist_damage": both("Arcane"),
+            "additional_resist_effects": set(),
+        },
+    }
     labels = [l.split(":")[0] for l in format_stats_block(demon).splitlines()]
     i = labels.index("Immunities")
     assert labels[i:i + 3] == ["Immunities", "Base Resistances", "Additional Resistances"]

@@ -145,7 +145,7 @@ def test_format_stats_block_has_stats_only():
     demon = generate_cacodemon_base("Imp", body_form="Arachnine")
     block = format_stats_block(demon)
     assert "Size:" in block
-    assert "Other Senses:" in block
+    assert "Armor Class:" in block   # an always-present stat line
     # It is ONLY the stats -- no abilities or spellcasting sections.
     assert "Special Abilities" not in block
     assert "Spellcasting" not in block
@@ -423,6 +423,60 @@ def test_special_senses_line_is_not_polluted_by_the_note():
         assert "reflected in the stat block" in by["Special Senses"]["detail"][0]
         return
     raise AssertionError("no Special Senses rolled in sample")
+
+
+# --- Hiding unused stat-block entries --------------------------------------
+
+def _coverage(immune=frozenset(), base=frozenset(), additional=frozenset()):
+    return {"immune_damage": set(immune), "immune_effects": set(),
+            "base_resist": set(base), "additional_resist_damage": set(additional),
+            "additional_resist_effects": set()}
+
+
+def _render_demon(movement, abilities, coverage):
+    return {
+        "size: ": {"category": "Man-Sized"},
+        "combat_stats": {"attack_routine": "1 (bite)", "movement": movement, "damage": ["2d8"]},
+        "primary_stats": {"ac": 4, "hd": "4**", "save": "F4", "morale": 0},
+        "attack": "7+",
+        "hit_points": 17,
+        "abilities": {"abilities": abilities},
+        "coverage": coverage,
+    }
+
+
+def test_stat_block_hides_unused_entries():
+    from Cacodemon_Generator import format_stats_block
+    demon = _render_demon(
+        movement={"land": "20'/60'", "fly": "40'/120'", "climb": None, "swim": None},
+        abilities=[],                                   # no Flying, no Special Senses
+        coverage=_coverage(base={("Fire", "mundane")}),
+    )
+    block = format_stats_block(demon)
+    assert "Speed (land):" in block
+    assert "Base Resistances:" in block
+    for hidden in ("Speed (fly):", "Speed (climb):", "Speed (swim):",
+                   "Other Senses:", "Immunities:", "Additional Resistances:"):
+        assert hidden not in block, hidden
+
+
+def test_stat_block_shows_used_entries():
+    from Cacodemon_Generator import format_stats_block
+    demon = _render_demon(
+        movement={"land": "20'/60'", "fly": "40'/120'", "climb": "20'/60'", "swim": None},
+        abilities=[_ability("Flying"),
+                   _ability("Special Senses", "Acute Vision", {"sense": "Acute Vision"})],
+        coverage=_coverage(immune={("Fire", "mundane")},
+                           base={("Cold", "mundane")},
+                           additional={("Arcane", "mundane")}),
+    )
+    block = format_stats_block(demon)
+    assert "Speed (fly):" in block          # Flying present
+    assert "Speed (climb):" in block        # climb present
+    assert "Speed (swim):" not in block     # swim None -> hidden
+    assert "Other Senses:" in block         # has a sense
+    assert "Immunities:" in block
+    assert "Additional Resistances:" in block
 
 
 def test_stat_block_ac_and_morale_match_effective_values():
